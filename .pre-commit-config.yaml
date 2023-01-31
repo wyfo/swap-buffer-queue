@@ -1,0 +1,26 @@
+repos:
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.12.0
+    hooks:
+      - id: typos
+        args: []
+  - repo: local
+    hooks:
+      - id: fmt
+        name: fmt
+        entry: cargo +nightly fmt
+        language: rust
+        pass_filenames: false
+        types_or: [rust, toml]
+      - id: clippy
+        name: clippy
+        entry: cargo clippy --tests -- -D warnings
+        language: rust
+        pass_filenames: false
+        types_or: [rust, toml]
+      - id: clippy
+        name: clippy
+        entry: cargo clippy --all-features --tests -- -D warnings
+        language: rust
+        pass_filenames: false
+        types_or: [rust, toml]

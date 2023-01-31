@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"trait":[["Notify","Notifier for waiting `SBQueue` operations."]]};
