@@ -106,8 +106,8 @@ pub unsafe trait Drainable<T>: Buffer<T> {
     /// Half-open interval [0,`len`) **must** have been inserted (see [`Buffer::insert`]) before
     /// calling this method.
     ///
-    /// The iterator returned must be exhausted; it will have the same effect than calling
-    /// [`Buffer::clear`]
+    /// The iterator returned must be exhausted before calling another mutable method;
+    /// it must have the same effect than calling [`Buffer::clear`].
     unsafe fn drain(&mut self, len: usize) -> Self::Drain<'_>;
 }
 

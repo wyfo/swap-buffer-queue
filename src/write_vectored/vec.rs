@@ -64,10 +64,10 @@ where
     }
 
     unsafe fn clear(&mut self, len: usize) {
+        self.total_size.store(0, Ordering::Release);
         for value in &mut self.owned[..len] {
             unsafe { value.assume_init_drop() }
         }
-        self.total_size.store(0, Ordering::Release);
     }
 }
 
@@ -91,6 +91,7 @@ where
         T: 'a;
 
     unsafe fn drain(&mut self, len: usize) -> Self::Drain<'_> {
+        self.total_size.store(0, Ordering::Release);
         self.owned[..len]
             .iter_mut()
             .map(|value| unsafe { value.assume_init_read() })
