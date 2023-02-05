@@ -56,7 +56,7 @@ pub mod write_vectored;
 pub use queue::SBQueue;
 #[cfg(feature = "async")]
 /// An asynchronous implementation of [`SBQueue`].
-pub type AsyncSBQueue<B> = SBQueue<B, r#async::AsyncNotifier>;
+pub type AsyncSBQueue<B, const EAGER: bool = true> = SBQueue<B, r#async::AsyncNotifier<EAGER>>;
 #[cfg(feature = "sync")]
 /// A synchronous implementation of [`SBQueue`].
-pub type SyncSBQueue<B> = SBQueue<B, sync::SyncNotifier>;
+pub type SyncSBQueue<B, const EAGER: bool = true> = SBQueue<B, sync::SyncNotifier<EAGER>>;

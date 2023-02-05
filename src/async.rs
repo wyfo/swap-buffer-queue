@@ -13,14 +13,16 @@ use crate::{
 
 /// An asynchronous notifier.
 #[derive(Debug, Default)]
-pub struct AsyncNotifier {
+pub struct AsyncNotifier<const EAGER: bool = true> {
     waker: AtomicWaker,
     notify: tokio::sync::Notify,
 }
 
-impl Notify for AsyncNotifier {
-    fn notify_dequeue(&self) {
-        self.waker.wake();
+impl<const EAGER: bool> Notify for AsyncNotifier<EAGER> {
+    fn notify_dequeue(&self, may_be_ready: bool) {
+        if EAGER || may_be_ready {
+            self.waker.wake();
+        }
     }
 
     fn notify_enqueue(&self) {

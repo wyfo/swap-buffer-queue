@@ -42,7 +42,7 @@ impl<T> EnqueueError<T> {
 pub enum TryDequeueError {
     /// The queue is empty.
     Empty,
-    /// There is a concurrent insertion that need to end before dequeuing.
+    /// There is a concurrent enqueuing that need to end before dequeuing.
     Pending,
     /// The queue is closed.
     Closed,
@@ -57,7 +57,7 @@ impl fmt::Display for TryDequeueError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let error = match self {
             Self::Empty => "queue is empty",
-            Self::Pending => "waiting for concurrent insertion end",
+            Self::Pending => "waiting for concurrent enqueuing end",
             Self::Closed => "queue is closed",
             Self::Conflict => "queue is concurrently dequeued",
         };

@@ -17,16 +17,16 @@ use crate::{
 
 /// A synchronous notifier.
 #[derive(Debug, Default)]
-pub struct SyncNotifier {
+pub struct SyncNotifier<const EAGER: bool = true> {
     cond_var: Condvar,
     lock: Mutex<()>,
     enqueue_waiting: AtomicBool,
     dequeue_waiting: AtomicBool,
 }
 
-impl Notify for SyncNotifier {
-    fn notify_dequeue(&self) {
-        if self.dequeue_waiting.swap(false, Ordering::Relaxed) {
+impl<const EAGER: bool> Notify for SyncNotifier<EAGER> {
+    fn notify_dequeue(&self, may_be_ready: bool) {
+        if (EAGER || may_be_ready) && self.dequeue_waiting.swap(false, Ordering::Relaxed) {
             self.cond_var.notify_all();
         }
     }

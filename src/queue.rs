@@ -77,7 +77,7 @@ impl<B, N> SBQueue<B, N>
 where
     B: Buffer,
 {
-    /// Create a new queue with the given capacity.
+    /// Returns queue's [`Notify`] implementor.
     ///
     /// # Examples
     /// ```
@@ -86,7 +86,7 @@ where
     /// use swap_buffer_queue::notify::Notify;
     ///
     /// let queue: AsyncSBQueue<VecBuffer<usize>> = AsyncSBQueue::with_capacity(42);
-    /// queue.notify().notify_dequeue();
+    /// queue.notify().notify_dequeue(true);
     /// ```
     pub fn notify(&self) -> &N {
         &self.notify
@@ -229,10 +229,8 @@ where
         }
         let buffer = &self.buffers[buffer_remain & 1];
         let index = buffer.capacity() - (buffer_remain >> 1);
-        let notify_dequeue = unsafe { buffer.insert(index, value) };
-        if notify_dequeue {
-            self.notify.notify_dequeue();
-        }
+        let may_be_ready = unsafe { buffer.insert(index, value) };
+        self.notify.notify_dequeue(may_be_ready);
         Ok(())
     }
 
@@ -311,7 +309,7 @@ where
     /// Tries dequeuing a buffer with all enqueued values from the queue.
     ///
     /// This method swaps the current buffer with the other one, which is empty. All concurrent
-    /// insertions must end before the the current buffer is really dequeuable, so the queue may
+    /// enqueuing must end before the the current buffer is really dequeuable, so the queue may
     /// be in a transitory state where `try_dequeue` must be retried. In this state, after a spin
     /// loop, this method will return a [`TryDequeueError::Pending`] error.
     ///
@@ -374,7 +372,7 @@ where
     /// ```
     pub fn close(&self) {
         self.buffer_remain.fetch_or(CLOSED_FLAG, Ordering::Relaxed);
-        self.notify.notify_dequeue();
+        self.notify.notify_dequeue(true);
         self.notify.notify_enqueue();
     }
 }
@@ -453,7 +451,7 @@ where
     ///     // then push the values to the overflow vector
     ///     guard.push(value);
     ///     // notify possible waiting dequeue
-    ///     queue.notify().notify_dequeue();
+    ///     queue.notify().notify_dequeue(true);
     ///     Ok(())
     /// }
     ///
