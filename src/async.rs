@@ -66,7 +66,7 @@ where
     /// let queue_clone = queue.clone();
     /// let task = tokio::spawn(async move { queue_clone.enqueue(3).await });
     /// queue.close();
-    /// assert_eq!(task.await.unwrap(), Err(EnqueueError(3)));
+    /// assert_eq!(task.await.unwrap(), Err(EnqueueError::Closed(3)));
     /// # })
     /// ```
     pub async fn enqueue<T>(&self, mut value: T) -> Result<(), EnqueueError<T>>
@@ -76,9 +76,10 @@ where
         loop {
             let notified = self.notify().notify.notified();
             match self.try_enqueue(value) {
-                Ok(_) => return Ok(()),
-                Err(TryEnqueueError::Closed(value)) => return Err(EnqueueError(value)),
-                Err(TryEnqueueError::InsufficientCapacity(v)) => value = v,
+                Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
+                    value = v
+                }
+                res => return res,
             };
             notified.await;
         }

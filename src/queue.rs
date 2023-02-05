@@ -436,17 +436,15 @@ where
     /// ) -> Result<(), EnqueueError<T>> {
     ///     // first, try to enqueue normally
     ///     match queue.try_enqueue(value) {
-    ///         Ok(()) => return Ok(()),
-    ///         Err(TryEnqueueError::Closed(v)) => return Err(EnqueueError(v)),
     ///         Err(TryEnqueueError::InsufficientCapacity(v)) => value = v,
+    ///         res => return res,
     ///     };
     ///     // if the enqueuing fails, lock the overflow
     ///     let mut guard = overflow.lock().unwrap();
     ///     // retry to enqueue (we never know what happened during lock acquisition)
     ///     match queue.try_enqueue(value) {
-    ///         Ok(()) => return Ok(()),
-    ///         Err(TryEnqueueError::Closed(v)) => return Err(EnqueueError(v)),
     ///         Err(TryEnqueueError::InsufficientCapacity(v)) => value = v,
+    ///         res => return res,
     ///     };
     ///     // then push the values to the overflow vector
     ///     guard.push(value);

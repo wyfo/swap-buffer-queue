@@ -72,7 +72,9 @@ where
         T: BufferValue<B>,
     {
         match self.try_enqueue(value) {
-            Err(TryEnqueueError::InsufficientCapacity(v)) => value = v,
+            Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
+                value = v
+            }
             res => return res,
         };
         let mut lock = self.notify().lock.lock().unwrap();
@@ -162,17 +164,13 @@ where
     /// let queue_clone = queue.clone();
     /// let task = std::thread::spawn(move || queue_clone.enqueue(3));
     /// queue.close();
-    /// assert_eq!(task.join().unwrap(), Err(EnqueueError(3)));
+    /// assert_eq!(task.join().unwrap(), Err(EnqueueError::Closed(3)));
     /// ```
     pub fn enqueue<T>(&self, value: T) -> Result<(), EnqueueError<T>>
     where
         T: BufferValue<B>,
     {
-        match self.enqueue_internal(value, None) {
-            Ok(_) => Ok(()),
-            Err(TryEnqueueError::Closed(value)) => Err(EnqueueError(value)),
-            Err(TryEnqueueError::InsufficientCapacity(_)) => unreachable!(),
-        }
+        self.enqueue_internal(value, None)
     }
 
     fn dequeue_internal(

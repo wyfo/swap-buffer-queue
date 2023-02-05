@@ -22,20 +22,9 @@ impl<T> TryEnqueueError<T> {
     }
 }
 
-/// Error returned by [`SBQueue::enqueue`](crate::SBQueue::enqueue).
-///
-/// It means the queue is closed.
-///
-/// The value whose enqueuing has failed is embedded within the error.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct EnqueueError<T>(pub T);
-
-impl<T> EnqueueError<T> {
-    /// Returns the value whose enqueuing has failed
-    pub fn inner(self) -> T {
-        self.0
-    }
-}
+/// Error returned by [`AsyncSBQueue::enqueue`](crate::AsyncSBQueue::enqueue)/
+/// [`SyncSBQueue::enqueue`](crate::SyncSBQueue::enqueue).
+pub type EnqueueError<T> = TryEnqueueError<T>;
 
 /// Error returned by [`SBQueue::try_dequeue`](crate::SBQueue::try_dequeue).
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -68,7 +57,8 @@ impl fmt::Display for TryDequeueError {
 #[cfg(feature = "std")]
 impl std::error::Error for TryDequeueError {}
 
-/// Error returned by [`SBQueue::dequeue`](crate::SBQueue::dequeue).
+/// Error returned by [`AsyncSBQueue::dequeue`](crate::AsyncSBQueue::dequeue)/
+/// [`SyncSBQueue::dequeue`](crate::SyncSBQueue::dequeue).
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum DequeueError {
     /// The queue is closed.
