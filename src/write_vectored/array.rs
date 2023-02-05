@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    buffer::{Buffer, Drainable},
+    buffer::{Buffer, BufferValue, Drainable},
     utils::ArrayWithHeaderAndTrailer,
     write_vectored::{VectoredSlice, EMPTY_SLICE},
 };
@@ -31,7 +31,7 @@ impl<T, const N: usize> Default for WriteVectoredArrayBuffer<T, N> {
     }
 }
 
-unsafe impl<T, const N: usize> Buffer<T> for WriteVectoredArrayBuffer<T, N>
+unsafe impl<T, const N: usize> Buffer for WriteVectoredArrayBuffer<T, N>
 where
     T: AsRef<[u8]>,
 {
@@ -39,23 +39,12 @@ where
     where
         T: 'a;
 
-    fn value_size(_value: &T) -> usize {
-        1
-    }
-
     fn capacity(&self) -> usize {
         N
     }
 
     fn debug(&self, debug_struct: &mut fmt::DebugStruct) {
         debug_struct.field("total_size", &self.total_size);
-    }
-
-    unsafe fn insert(&mut self, index: usize, value: T) {
-        let owned_bytes = self.owned[index].write(value);
-        let slice = IoSlice::new(owned_bytes.as_ref());
-        self.slices[index + 1] = unsafe { mem::transmute(slice) };
-        self.total_size.fetch_add(slice.len(), Ordering::AcqRel);
     }
 
     unsafe fn slice(&mut self, len: usize) -> Self::Slice<'_> {
@@ -73,10 +62,27 @@ where
     }
 }
 
-unsafe impl<T, const N: usize> Drainable<T> for WriteVectoredArrayBuffer<T, N>
+unsafe impl<T, const N: usize> BufferValue<WriteVectoredArrayBuffer<T, N>> for T
 where
     T: AsRef<[u8]>,
 {
+    fn size(&self) -> usize {
+        1
+    }
+
+    unsafe fn insert_into(self, buffer: &mut WriteVectoredArrayBuffer<T, N>, index: usize) {
+        let owned_bytes = buffer.owned[index].write(self);
+        let slice = IoSlice::new(owned_bytes.as_ref());
+        buffer.slices[index + 1] = unsafe { mem::transmute(slice) };
+        buffer.total_size.fetch_add(slice.len(), Ordering::AcqRel);
+    }
+}
+
+unsafe impl<T, const N: usize> Drainable for WriteVectoredArrayBuffer<T, N>
+where
+    T: AsRef<[u8]>,
+{
+    type Item = T;
     type Drain<'a> =
         std::iter::Map<std::slice::IterMut<'a, MaybeUninit<T>>, fn(&mut MaybeUninit<T>) -> T>
     where

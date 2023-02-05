@@ -7,34 +7,26 @@
 //!
 //! # Examples
 //! ```rust
+//! # use std::io::Write;
 //! # use swap_buffer_queue::SBQueue;
 //! # use swap_buffer_queue::write::{WriteBytesSlice, WriteVecBuffer};
-//! // the slice to be written in the queue's buffer (not too complex for the example)
-//! #[derive(Debug)]
-//! struct Slice(Vec<u8>);
-//! impl WriteBytesSlice for Slice {
-//!     fn size(&self) -> usize {
-//!         self.0.len()
-//!     }
-//!     fn write(&mut self, slice: &mut [u8]) {
-//!         slice.copy_from_slice(&self.0);
-//!     }
-//! }
-//!
 //! // Creates a WriteVecBuffer queue with a 2-bytes header
-//! let queue: SBQueue<WriteVecBuffer<2>, Slice> = SBQueue::with_capacity((1 << 16) - 1);
-//! queue.try_enqueue(Slice(vec![0; 256])).unwrap();
-//! queue.try_enqueue(Slice(vec![42; 42])).unwrap();
+//! let queue: SBQueue<WriteVecBuffer<2>> = SBQueue::with_capacity((1 << 16) - 1);
+//! queue
+//!     .try_enqueue((256, |slice: &mut [u8]| { /* write the slice */ }))
+//!     .ok()
+//!     .unwrap();
+//! queue
+//!     .try_enqueue((42, |slice: &mut [u8]| { /* write the slice */ }))
+//!     .ok()
+//!     .unwrap();
 //! let mut slice = queue.try_dequeue().unwrap();
 //! // Adds a header with the len of the buffer
 //! let len = (slice.len() as u16).to_be_bytes();
 //! slice.header().copy_from_slice(&len);
 //! // Let's pretend we have a writer
 //! let mut writer: Vec<u8> = Default::default();
-//! assert_eq!(
-//!     std::io::Write::write(&mut writer, slice.frame()).unwrap(),
-//!     300
-//! );
+//! assert_eq!(writer.write(slice.frame()).unwrap(), 300);
 //! ```
 
 use std::ops::{Deref, DerefMut};
@@ -61,19 +53,9 @@ pub use vec::WriteVecBuffer;
 /// # use swap_buffer_queue::buffer::BufferSlice;
 /// # use swap_buffer_queue::SBQueue;
 /// # use swap_buffer_queue::write::{BytesSlice, WriteBytesSlice, WriteVecBuffer};
-/// #[derive(Debug)]
-/// # struct Slice(Vec<u8>);
-/// # impl WriteBytesSlice for Slice {
-/// #    fn size(&self) -> usize {
-/// #         self.0.len()
-/// #     }
-/// #     fn write(&mut self, slice: &mut [u8]) {
-/// #         slice.copy_from_slice(&self.0);
-/// #     }
-/// # }
-/// # let queue: SBQueue<WriteVecBuffer<2, 4>, Slice> = SBQueue::with_capacity(42);
-/// # queue.try_enqueue(Slice(vec![2, 3, 4, 5])).unwrap();
-/// let mut slice: BufferSlice<WriteVecBuffer<2, 4>, _, _>;
+/// # let queue: SBQueue<WriteVecBuffer<2, 4>> = SBQueue::with_capacity(42);
+/// # queue.try_enqueue((4, |slice: &mut [u8]| slice.copy_from_slice(&[2, 3, 4, 5]))).ok().unwrap();
+/// let mut slice: BufferSlice<WriteVecBuffer<2, 4>, _> /* = ... */;
 /// # slice = queue.try_dequeue().unwrap();
 /// assert_eq!(slice.deref().deref(), &[2, 3, 4, 5]);
 /// slice.header().copy_from_slice(&[0, 1]);
@@ -142,5 +124,17 @@ pub trait WriteBytesSlice {
     /// Returns the size of the slice to be written.
     fn size(&self) -> usize;
     /// Writes the slice.
-    fn write(&mut self, slice: &mut [u8]);
+    fn write(self, slice: &mut [u8]);
+}
+
+impl<F> WriteBytesSlice for (usize, F)
+where
+    F: FnOnce(&mut [u8]),
+{
+    fn size(&self) -> usize {
+        self.0
+    }
+    fn write(self, slice: &mut [u8]) {
+        self.1(slice);
+    }
 }

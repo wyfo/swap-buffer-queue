@@ -5,7 +5,7 @@ use std::{future, task::Poll};
 use futures::task::AtomicWaker;
 
 use crate::{
-    buffer::{Buffer, BufferSlice},
+    buffer::{Buffer, BufferSlice, BufferValue},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
     notify::Notify,
     queue::SBQueue,
@@ -28,9 +28,9 @@ impl Notify for AsyncNotifier {
     }
 }
 
-impl<B, T> SBQueue<B, T, AsyncNotifier>
+impl<B> SBQueue<B, AsyncNotifier>
 where
-    B: Buffer<T>,
+    B: Buffer,
 {
     /// Enqueues the given value inside the queue.
     ///
@@ -46,8 +46,7 @@ where
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::{EnqueueError, TryEnqueueError};
     /// # tokio_test::block_on(async {
-    /// let queue: Arc<AsyncSBQueue<VecBuffer<usize>, usize>> =
-    ///     Arc::new(AsyncSBQueue::with_capacity(1));
+    /// let queue: Arc<AsyncSBQueue<VecBuffer<usize>>> = Arc::new(AsyncSBQueue::with_capacity(1));
     /// queue.try_enqueue(0).unwrap();
     /// assert_eq!(
     ///     queue.try_enqueue(0),
@@ -68,7 +67,10 @@ where
     /// assert_eq!(task.await.unwrap(), Err(EnqueueError(3)));
     /// # })
     /// ```
-    pub async fn enqueue(&self, mut value: T) -> Result<(), EnqueueError<T>> {
+    pub async fn enqueue<T>(&self, mut value: T) -> Result<(), EnqueueError<T>>
+    where
+        T: BufferValue<B>,
+    {
         loop {
             let notified = self.notify().notify.notified();
             match self.try_enqueue(value) {
@@ -94,8 +96,7 @@ where
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::{DequeueError, TryDequeueError};
     /// # tokio_test::block_on(async {
-    /// let queue: Arc<AsyncSBQueue<VecBuffer<usize>, usize>> =
-    ///     Arc::new(AsyncSBQueue::with_capacity(1));
+    /// let queue: Arc<AsyncSBQueue<VecBuffer<usize>>> = Arc::new(AsyncSBQueue::with_capacity(1));
     /// assert_eq!(queue.try_dequeue().unwrap_err(), TryDequeueError::Empty);
     /// // queue is empty, let's spawn a dequeuing task and enqueue
     /// let queue_clone = queue.clone();
@@ -114,7 +115,7 @@ where
     /// assert_eq!(task.await.unwrap().unwrap_err(), DequeueError::Closed);
     /// # })
     /// ```
-    pub async fn dequeue(&self) -> Result<BufferSlice<B, T, AsyncNotifier>, DequeueError> {
+    pub async fn dequeue(&self) -> Result<BufferSlice<B, AsyncNotifier>, DequeueError> {
         future::poll_fn(|cx| {
             match self.try_dequeue() {
                 Ok(buf) => return Poll::Ready(Ok(buf)),

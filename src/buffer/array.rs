@@ -1,6 +1,6 @@
 use std::{fmt, mem, mem::MaybeUninit};
 
-use crate::buffer::{Buffer, Drainable};
+use crate::buffer::{Buffer, BufferValue, Drainable};
 
 /// A simple array buffer.
 pub struct ArrayBuffer<T, const N: usize>([MaybeUninit<T>; N]);
@@ -11,24 +11,16 @@ impl<T, const N: usize> Default for ArrayBuffer<T, N> {
     }
 }
 
-unsafe impl<T, const N: usize> Buffer<T> for ArrayBuffer<T, N> {
+unsafe impl<T, const N: usize> Buffer for ArrayBuffer<T, N> {
     type Slice<'a> = &'a mut [T]
     where
         T: 'a;
-
-    fn value_size(_value: &T) -> usize {
-        1
-    }
 
     fn capacity(&self) -> usize {
         self.0.len()
     }
 
     fn debug(&self, _debug_struct: &mut fmt::DebugStruct) {}
-
-    unsafe fn insert(&mut self, index: usize, value: T) {
-        self.0[index].write(value);
-    }
 
     unsafe fn slice(&mut self, len: usize) -> Self::Slice<'_> {
         unsafe { mem::transmute(&mut self.0[..len]) }
@@ -41,7 +33,18 @@ unsafe impl<T, const N: usize> Buffer<T> for ArrayBuffer<T, N> {
     }
 }
 
-unsafe impl<T, const N: usize> Drainable<T> for ArrayBuffer<T, N> {
+unsafe impl<T, const N: usize> BufferValue<ArrayBuffer<T, N>> for T {
+    fn size(&self) -> usize {
+        1
+    }
+
+    unsafe fn insert_into(self, buffer: &mut ArrayBuffer<T, N>, index: usize) {
+        buffer.0[index].write(self);
+    }
+}
+
+unsafe impl<T, const N: usize> Drainable for ArrayBuffer<T, N> {
+    type Item = T;
     type Drain<'a> =
         std::iter::Map<std::slice::IterMut<'a, MaybeUninit<T>>, fn(&mut MaybeUninit<T>) -> T>
     where

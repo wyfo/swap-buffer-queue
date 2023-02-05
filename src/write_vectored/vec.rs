@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    buffer::{Buffer, Drainable, Resizable},
+    buffer::{Buffer, BufferValue, Drainable, Resizable},
     write_vectored::{VectoredSlice, EMPTY_SLICE},
 };
 
@@ -28,17 +28,13 @@ impl<T> Default for WriteVectoredVecBuffer<T> {
     }
 }
 
-unsafe impl<T> Buffer<T> for WriteVectoredVecBuffer<T>
+unsafe impl<T> Buffer for WriteVectoredVecBuffer<T>
 where
     T: AsRef<[u8]>,
 {
     type Slice<'a> = VectoredSlice<'a>
     where
         T: 'a;
-
-    fn value_size(_value: &T) -> usize {
-        1
-    }
 
     fn capacity(&self) -> usize {
         self.owned.len()
@@ -47,13 +43,6 @@ where
     fn debug(&self, debug_struct: &mut fmt::DebugStruct) {
         debug_struct.field("capacity", &self.capacity());
         debug_struct.field("total_size", &self.total_size);
-    }
-
-    unsafe fn insert(&mut self, index: usize, value: T) {
-        let owned_bytes = self.owned[index].write(value);
-        let slice = IoSlice::new(owned_bytes.as_ref());
-        self.slices[index + 1] = unsafe { mem::transmute(slice) };
-        self.total_size.fetch_add(slice.len(), Ordering::AcqRel);
     }
 
     unsafe fn slice(&mut self, len: usize) -> Self::Slice<'_> {
@@ -71,7 +60,23 @@ where
     }
 }
 
-unsafe impl<T> Resizable<T> for WriteVectoredVecBuffer<T>
+unsafe impl<T> BufferValue<WriteVectoredVecBuffer<T>> for T
+where
+    T: AsRef<[u8]>,
+{
+    fn size(&self) -> usize {
+        1
+    }
+
+    unsafe fn insert_into(self, buffer: &mut WriteVectoredVecBuffer<T>, index: usize) {
+        let owned_bytes = buffer.owned[index].write(self);
+        let slice = IoSlice::new(owned_bytes.as_ref());
+        buffer.slices[index + 1] = unsafe { mem::transmute(slice) };
+        buffer.total_size.fetch_add(slice.len(), Ordering::AcqRel);
+    }
+}
+
+unsafe impl<T> Resizable for WriteVectoredVecBuffer<T>
 where
     T: AsRef<[u8]>,
 {
@@ -81,10 +86,11 @@ where
     }
 }
 
-unsafe impl<T> Drainable<T> for WriteVectoredVecBuffer<T>
+unsafe impl<T> Drainable for WriteVectoredVecBuffer<T>
 where
     T: AsRef<[u8]>,
 {
+    type Item = T;
     type Drain<'a> =
         std::iter::Map<std::slice::IterMut<'a, MaybeUninit<T>>, fn(&mut MaybeUninit<T>) -> T>
     where

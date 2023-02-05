@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::{
-    buffer::{Buffer, Resizable},
+    buffer::{Buffer, BufferValue, Resizable},
     write::{BytesSlice, WriteBytesSlice},
 };
 
@@ -9,28 +9,17 @@ use crate::{
 #[derive(Default)]
 pub struct WriteVecBuffer<const HEADER_SIZE: usize = 0, const TRAILER_SIZE: usize = 0>(Box<[u8]>);
 
-unsafe impl<T, const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Buffer<T>
+unsafe impl<const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Buffer
     for WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>
-where
-    T: WriteBytesSlice,
 {
     type Slice<'a> = BytesSlice<'a, HEADER_SIZE, TRAILER_SIZE>;
-
-    fn value_size(value: &T) -> usize {
-        value.size()
-    }
 
     fn capacity(&self) -> usize {
         self.0.len().saturating_sub(HEADER_SIZE + TRAILER_SIZE)
     }
 
     fn debug(&self, debug_struct: &mut fmt::DebugStruct) {
-        let capacity = <WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE> as Buffer<T>>::capacity(self);
-        debug_struct.field("capacity", &capacity);
-    }
-
-    unsafe fn insert(&mut self, index: usize, mut value: T) {
-        value.write(&mut self.0[HEADER_SIZE + index..HEADER_SIZE + index + value.size()])
+        debug_struct.field("capacity", &self.capacity());
     }
 
     unsafe fn slice(&mut self, len: usize) -> Self::Slice<'_> {
@@ -40,10 +29,27 @@ where
     unsafe fn clear(&mut self, _len: usize) {}
 }
 
-unsafe impl<T, const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Resizable<T>
-    for WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>
+unsafe impl<T, const HEADER_SIZE: usize, const TRAILER_SIZE: usize>
+    BufferValue<WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>> for T
 where
     T: WriteBytesSlice,
+{
+    fn size(&self) -> usize {
+        WriteBytesSlice::size(self)
+    }
+
+    unsafe fn insert_into(
+        self,
+        buffer: &mut WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>,
+        index: usize,
+    ) {
+        let size = self.size();
+        self.write(&mut buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + size]);
+    }
+}
+
+unsafe impl<const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Resizable
+    for WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>
 {
     unsafe fn resize(&mut self, capacity: usize) {
         self.0 = vec![0; HEADER_SIZE + capacity + TRAILER_SIZE].into();

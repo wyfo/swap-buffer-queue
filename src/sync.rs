@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::{
-    buffer::{Buffer, BufferSlice},
+    buffer::{Buffer, BufferSlice, BufferValue},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
     notify::Notify,
     queue::SBQueue,
@@ -38,9 +38,9 @@ impl Notify for SyncNotifier {
     }
 }
 
-impl<B, T> SBQueue<B, T, SyncNotifier>
+impl<B> SBQueue<B, SyncNotifier>
 where
-    B: Buffer<T>,
+    B: Buffer,
 {
     fn wait_until<'a>(
         &self,
@@ -63,11 +63,14 @@ where
         })
     }
 
-    fn enqueue_internal(
+    fn enqueue_internal<T>(
         &self,
         mut value: T,
         mut timeout: Option<Duration>,
-    ) -> Result<(), TryEnqueueError<T>> {
+    ) -> Result<(), TryEnqueueError<T>>
+    where
+        T: BufferValue<B>,
+    {
         match self.try_enqueue(value) {
             Err(TryEnqueueError::InsufficientCapacity(v)) => value = v,
             res => return res,
@@ -102,7 +105,7 @@ where
     /// # use swap_buffer_queue::SyncSBQueue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::{EnqueueError, TryEnqueueError};
-    /// let queue: Arc<SyncSBQueue<VecBuffer<usize>, usize>> = Arc::new(SyncSBQueue::with_capacity(1));
+    /// let queue: Arc<SyncSBQueue<VecBuffer<usize>>> = Arc::new(SyncSBQueue::with_capacity(1));
     /// queue.try_enqueue(0).unwrap();
     /// assert_eq!(
     ///     queue.try_enqueue_timeout(1, Duration::from_millis(1)),
@@ -117,11 +120,14 @@ where
     ///     .try_enqueue_timeout(1, Duration::from_secs(1))
     ///     .unwrap();
     /// ```
-    pub fn try_enqueue_timeout(
+    pub fn try_enqueue_timeout<T>(
         &self,
         value: T,
         timeout: Duration,
-    ) -> Result<(), TryEnqueueError<T>> {
+    ) -> Result<(), TryEnqueueError<T>>
+    where
+        T: BufferValue<B>,
+    {
         self.enqueue_internal(value, Some(timeout))
     }
 
@@ -138,7 +144,7 @@ where
     /// # use swap_buffer_queue::SyncSBQueue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::{EnqueueError, TryEnqueueError};
-    /// let queue: Arc<SyncSBQueue<VecBuffer<usize>, usize>> = Arc::new(SyncSBQueue::with_capacity(1));
+    /// let queue: Arc<SyncSBQueue<VecBuffer<usize>>> = Arc::new(SyncSBQueue::with_capacity(1));
     /// queue.try_enqueue(0).unwrap();
     /// assert_eq!(
     ///     queue.try_enqueue(1),
@@ -158,7 +164,10 @@ where
     /// queue.close();
     /// assert_eq!(task.join().unwrap(), Err(EnqueueError(3)));
     /// ```
-    pub fn enqueue(&self, value: T) -> Result<(), EnqueueError<T>> {
+    pub fn enqueue<T>(&self, value: T) -> Result<(), EnqueueError<T>>
+    where
+        T: BufferValue<B>,
+    {
         match self.enqueue_internal(value, None) {
             Ok(_) => Ok(()),
             Err(TryEnqueueError::Closed(value)) => Err(EnqueueError(value)),
@@ -169,7 +178,7 @@ where
     fn dequeue_internal(
         &self,
         mut timeout: Option<Duration>,
-    ) -> Result<BufferSlice<B, T, SyncNotifier>, TryDequeueError> {
+    ) -> Result<BufferSlice<B, SyncNotifier>, TryDequeueError> {
         match self.try_dequeue() {
             Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
             res => return res,
@@ -203,7 +212,7 @@ where
     /// # use swap_buffer_queue::SyncSBQueue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::{DequeueError, TryDequeueError};
-    /// let queue: Arc<SyncSBQueue<VecBuffer<usize>, usize>> = Arc::new(SyncSBQueue::with_capacity(1));
+    /// let queue: Arc<SyncSBQueue<VecBuffer<usize>>> = Arc::new(SyncSBQueue::with_capacity(1));
     /// assert_eq!(
     ///     queue
     ///         .try_dequeue_timeout(Duration::from_millis(1))
@@ -226,7 +235,7 @@ where
     pub fn try_dequeue_timeout(
         &self,
         timeout: Duration,
-    ) -> Result<BufferSlice<B, T, SyncNotifier>, TryDequeueError> {
+    ) -> Result<BufferSlice<B, SyncNotifier>, TryDequeueError> {
         self.dequeue_internal(Some(timeout))
     }
 
@@ -243,7 +252,7 @@ where
     /// # use swap_buffer_queue::SyncSBQueue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::{DequeueError, TryDequeueError};
-    /// let queue: Arc<SyncSBQueue<VecBuffer<usize>, usize>> = Arc::new(SyncSBQueue::with_capacity(1));
+    /// let queue: Arc<SyncSBQueue<VecBuffer<usize>>> = Arc::new(SyncSBQueue::with_capacity(1));
     /// assert_eq!(queue.try_dequeue().unwrap_err(), TryDequeueError::Empty);
     /// // queue is empty, let's spawn a dequeuing task and enqueue
     /// let queue_clone = queue.clone();
@@ -261,7 +270,7 @@ where
     /// queue.close();
     /// assert_eq!(task.join().unwrap().unwrap_err(), DequeueError::Closed);
     /// ```
-    pub fn dequeue(&self) -> Result<BufferSlice<B, T, SyncNotifier>, DequeueError> {
+    pub fn dequeue(&self) -> Result<BufferSlice<B, SyncNotifier>, DequeueError> {
         match self.dequeue_internal(None) {
             Ok(buf) => Ok(buf),
             Err(TryDequeueError::Closed) => Err(DequeueError::Closed),

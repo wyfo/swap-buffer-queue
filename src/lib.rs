@@ -18,7 +18,7 @@
 //! # use std::ops::Deref;
 //! # use swap_buffer_queue::{buffer::VecBuffer, SBQueue};
 //! // Initialize the queue with a capacity
-//! let queue: SBQueue<VecBuffer<usize>, usize> = SBQueue::with_capacity(42);
+//! let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
 //! // Enqueue some values
 //! queue.try_enqueue(0).unwrap();
 //! queue.try_enqueue(1).unwrap();
@@ -56,7 +56,7 @@ pub mod write_vectored;
 pub use queue::SBQueue;
 #[cfg(feature = "async")]
 /// An asynchronous implementation of [`SBQueue`].
-pub type AsyncSBQueue<B, T> = SBQueue<B, T, r#async::AsyncNotifier>;
+pub type AsyncSBQueue<B> = SBQueue<B, r#async::AsyncNotifier>;
 #[cfg(feature = "sync")]
 /// A synchronous implementation of [`SBQueue`].
-pub type SyncSBQueue<B, T> = SBQueue<B, T, sync::SyncNotifier>;
+pub type SyncSBQueue<B> = SBQueue<B, sync::SyncNotifier>;

@@ -3,7 +3,6 @@
 use std::{
     cell::UnsafeCell,
     fmt,
-    marker::PhantomData,
     mem::ManuallyDrop,
     ops::{Deref, DerefMut},
     panic::{RefUnwindSafe, UnwindSafe},
@@ -27,49 +26,57 @@ pub use array::ArrayBuffer;
 #[cfg(feature = "buffer")]
 pub use vec::VecBuffer;
 
-/// [`SBQueue`] buffer.
+/// [`SBQueue`] buffer. It is used together with [`BufferValue`].
 ///
 /// # Safety
-/// This trait is meant to be used inside an [`UnsafeCell`], that's why mutability of `self`
-/// parameter doesn't follow safe Rust rules.
+/// This trait is meant to be used inside an [`UnsafeCell`], that's why it doesn't follow safe Rust
+/// borrowing rules.
 /// - [`capacity`](Buffer::capacity) and [`debug`](Buffer::debug) methods must be safe to call
-/// concurrently to other methods receiving `&mut self`, e.g. [`insert`](Buffer::insert).
-/// - [`insert`](Buffer::insert) method may be called multiple times **concurrently**
+/// concurrently to other methods receiving mutable reference, e.g. [`clear`](Buffer::clear).
+/// - [`BufferValue::insert_into`] may be called multiple times **concurrently**.
 ///
 /// The rest behaves *normally*, i.e. [`slice`](Buffer::slice) method borrow a mutable reference,
 /// which must be released to call [`clear`](Buffer::clear), etc.
-pub unsafe trait Buffer<T>: Default {
+pub unsafe trait Buffer: Default {
     /// The slice type returned by [`slice`](Buffer::slice) method.
     type Slice<'a>
     where
         Self: 'a;
-    /// Return the size taken by a value in the buffer.
-    fn value_size(value: &T) -> usize;
     /// Returns the buffer's capacity.
     fn capacity(&self) -> usize;
     /// Formats the buffer fields in debugging context.
     fn debug(&self, debug_struct: &mut fmt::DebugStruct);
-    /// Inserts value into the buffer at the given index.
-    ///
-    /// # Safety
-    /// Every call to this method **must** have a non overlapping half-open interval
-    /// [`index`,`index+Buffer::value_size(&value)`).
-    unsafe fn insert(&mut self, index: usize, value: T);
     /// Returns a slice of the buffer.
     ///
     /// # Safety
-    /// Half-open interval [0,`len`) **must** have been inserted (see [`insert`](Buffer::insert))
+    /// Half-open interval [0,`len`) **must** have been inserted (see [`BufferValue::insert_into`])
     /// before calling this method.
     unsafe fn slice(&mut self, len: usize) -> Self::Slice<'_>;
     /// Clears the buffer.
     ///
     /// # Safety
-    /// Half-open interval [0,`len`) **must** have been inserted (see [`insert`](Buffer::insert))
+    /// Half-open interval [0,`len`) **must** have been inserted (see [`BufferValue::insert_into`])
     /// before calling this method.
     ///
-    /// Calling this method *clears* the inserted value, i.e. inserted interval is reset to [0, 0)
-    /// (see [`insert`](Buffer::insert)), meaning new value can be inserted.
+    /// Calling this method *clears* the inserted value, i.e. inserted interval is reset to [0, 0),
+    /// meaning new value can be inserted.
     unsafe fn clear(&mut self, len: usize);
+}
+
+/// [`Buffer`] value.
+///
+/// # Safety
+/// [`BufferValue::insert_into`] may be called multiple times **concurrently** (see
+/// [`Buffer` safety section](Buffer#safety).
+pub unsafe trait BufferValue<B: Buffer> {
+    /// Return the size taken by a value in the buffer.
+    fn size(&self) -> usize;
+    /// Inserts the value into the buffer at the given index.
+    ///
+    /// # Safety
+    /// Every call to this method **must** have a non overlapping half-open interval
+    /// [`index`,`index+Buffer::value_size(&value)`).
+    unsafe fn insert_into(self, buffer: &mut B, index: usize);
 }
 
 /// Resizable [`Buffer`].
@@ -77,13 +84,13 @@ pub unsafe trait Buffer<T>: Default {
 /// # Safety
 /// The trait extends [`Buffer`] contract, with [`resize`](Resizable::resize) method following the
 /// same rule as [`Buffer::clear`]. It means that [`Buffer::capacity`] can be called concurrently,
-/// but not [`Buffer::insert`] or [`Buffer::clear`].
-pub unsafe trait Resizable<T>: Buffer<T> {
+/// but not [`BufferValue::insert_into`] or [`Buffer::clear`].
+pub unsafe trait Resizable: Buffer {
     /// Resizes the buffer.
     ///
     /// # Safety
-    /// This method may be called before any insertion with [`Buffer::insert`]; it must not be
-    /// called before [`Buffer::clear`] (or [`Drainable::drain`]).
+    /// This method may be called before any insertion with [`BufferValue::insert_into`];
+    /// it must not be called before [`Buffer::clear`] (or [`Drainable::drain`]).
     unsafe fn resize(&mut self, capacity: usize);
 }
 
@@ -92,55 +99,42 @@ pub unsafe trait Resizable<T>: Buffer<T> {
 /// # Safety
 /// The trait extends [`Buffer`] contract, with [`drain`](Drainable::drain) method following the
 /// same rule as [`Buffer::clear`]. It means that [`Buffer::capacity`] can be called concurrently,
-/// but not [`Buffer::insert`] or [`Buffer::clear`].
-pub unsafe trait Drainable<T>: Buffer<T> {
-    /// The drain type returned by [`drain`](Drainable::drain).
-    ///
-    /// It may implement [`Iterator<Item=T>'](Iterator).
-    type Drain<'a>: Iterator<Item = T>
+/// but not [`BufferValue::insert_into`] or [`Buffer::clear`].
+pub unsafe trait Drainable: Buffer {
+    /// [`Drain`](Drainable::Drain) iterator item type.
+    type Item;
+    /// The iterator type returned by [`drain`](Drainable::drain).
+    type Drain<'a>: Iterator<Item = Self::Item>
     where
         Self: 'a;
     /// Removes all elements of the buffer and returns them as an iterator.
     ///
     /// # Safety
-    /// Half-open interval [0,`len`) **must** have been inserted (see [`Buffer::insert`]) before
-    /// calling this method.
+    /// Half-open interval [0,`len`) **must** have been inserted (see [`BufferValue::insert_into`])
+    /// before calling this method.
     ///
     /// The iterator returned must be exhausted before calling another mutable method;
     /// it must have the same effect than calling [`Buffer::clear`].
     unsafe fn drain(&mut self, len: usize) -> Self::Drain<'_>;
 }
 
-pub(crate) struct BufferWithLen<B, T>
+#[derive(Default)]
+pub(crate) struct BufferWithLen<B>
 where
-    B: Buffer<T>,
+    B: Buffer,
 {
     buffer: UnsafeCell<B>,
     len: AtomicUsize,
-    _phantom: PhantomData<T>,
 }
 
-unsafe impl<B, T> Send for BufferWithLen<B, T> where B: Buffer<T> {}
-unsafe impl<B, T> Sync for BufferWithLen<B, T> where B: Buffer<T> {}
-impl<B, T> UnwindSafe for BufferWithLen<B, T> where B: Buffer<T> {}
-impl<B, T> RefUnwindSafe for BufferWithLen<B, T> where B: Buffer<T> {}
+unsafe impl<B> Send for BufferWithLen<B> where B: Buffer {}
+unsafe impl<B> Sync for BufferWithLen<B> where B: Buffer {}
+impl<B> UnwindSafe for BufferWithLen<B> where B: Buffer {}
+impl<B> RefUnwindSafe for BufferWithLen<B> where B: Buffer {}
 
-impl<B, T> Default for BufferWithLen<B, T>
+impl<B> Deref for BufferWithLen<B>
 where
-    B: Buffer<T>,
-{
-    fn default() -> Self {
-        Self {
-            buffer: Default::default(),
-            len: Default::default(),
-            _phantom: Default::default(),
-        }
-    }
-}
-
-impl<B, T> Deref for BufferWithLen<B, T>
-where
-    B: Buffer<T>,
+    B: Buffer,
 {
     type Target = B;
     fn deref(&self) -> &Self::Target {
@@ -148,9 +142,9 @@ where
     }
 }
 
-impl<B, T> BufferWithLen<B, T>
+impl<B> BufferWithLen<B>
 where
-    B: Buffer<T>,
+    B: Buffer,
 {
     pub(crate) fn len(&self) -> usize {
         self.len.load(Ordering::Relaxed)
@@ -161,9 +155,12 @@ where
         unsafe { &*self.buffer.get() }.debug(debug_struct);
     }
 
-    pub(crate) unsafe fn insert(&self, index: usize, value: T) -> bool {
-        let size = B::value_size(&value);
-        (*self.buffer.get()).insert(index, value);
+    pub(crate) unsafe fn insert<T>(&self, index: usize, value: T) -> bool
+    where
+        T: BufferValue<B>,
+    {
+        let size = value.size();
+        value.insert_into(&mut *self.buffer.get(), index);
         let prev_len = self.len.fetch_add(size, Ordering::AcqRel);
         prev_len == index
     }
@@ -180,20 +177,16 @@ where
     }
 }
 
-impl<B, T> BufferWithLen<B, T>
+impl<B> BufferWithLen<B>
 where
-    B: Buffer<T> + Resizable<T>,
+    B: Buffer + Resizable,
 {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
-        let mut buffer = B::default();
+        let mut buf = Self::default();
         if capacity > 0 {
-            unsafe { buffer.resize(capacity) };
+            unsafe { buf.buffer.get_mut().resize(capacity) };
         }
-        Self {
-            buffer: UnsafeCell::new(buffer),
-            len: AtomicUsize::new(0),
-            _phantom: PhantomData,
-        }
+        buf
     }
 
     pub(crate) unsafe fn resize(&self, capacity: usize) {
@@ -204,9 +197,9 @@ where
     }
 }
 
-impl<B, T> BufferWithLen<B, T>
+impl<B> BufferWithLen<B>
 where
-    B: Buffer<T> + Drainable<T>,
+    B: Buffer + Drainable,
 {
     pub(crate) unsafe fn drain(&self, len: usize) -> B::Drain<'_> {
         debug_assert_eq!(self.len(), len);
@@ -216,9 +209,9 @@ where
     }
 }
 
-impl<B, T> Drop for BufferWithLen<B, T>
+impl<B> Drop for BufferWithLen<B>
 where
-    B: Buffer<T>,
+    B: Buffer,
 {
     fn drop(&mut self) {
         unsafe { self.clear(self.len()) };
@@ -232,7 +225,7 @@ where
 /// # use std::ops::Deref;
 /// # use swap_buffer_queue::SBQueue;
 /// # use swap_buffer_queue::buffer::VecBuffer;
-/// let queue: SBQueue<VecBuffer<usize>, usize> = SBQueue::with_capacity(42);
+/// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
 /// queue.try_enqueue(0).unwrap();
 /// queue.try_enqueue(1).unwrap();
 ///
@@ -240,22 +233,22 @@ where
 /// assert_eq!(slice.deref(), &[0, 1]);
 /// assert_eq!(slice.into_iter().collect::<Vec<_>>(), vec![0, 1]);
 /// ```
-pub struct BufferSlice<'a, B, T, N>
+pub struct BufferSlice<'a, B, N>
 where
-    B: Buffer<T>,
+    B: Buffer,
 {
-    queue: &'a SBQueue<B, T, N>,
+    queue: &'a SBQueue<B, N>,
     buffer_index: usize,
     len: usize,
     slice: B::Slice<'a>,
 }
 
-impl<'a, B, T, N> BufferSlice<'a, B, T, N>
+impl<'a, B, N> BufferSlice<'a, B, N>
 where
-    B: Buffer<T>,
+    B: Buffer,
 {
     pub(crate) fn new(
-        queue: &'a SBQueue<B, T, N>,
+        queue: &'a SBQueue<B, N>,
         buffer_index: usize,
         len: usize,
         slice: B::Slice<'a>,
@@ -269,9 +262,9 @@ where
     }
 }
 
-impl<'a, B, T, N> fmt::Debug for BufferSlice<'a, B, T, N>
+impl<'a, B, N> fmt::Debug for BufferSlice<'a, B, N>
 where
-    B: Buffer<T>,
+    B: Buffer,
     B::Slice<'a>: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -279,9 +272,9 @@ where
     }
 }
 
-impl<'a, B, T, N> Deref for BufferSlice<'a, B, T, N>
+impl<'a, B, N> Deref for BufferSlice<'a, B, N>
 where
-    B: Buffer<T>,
+    B: Buffer,
 {
     type Target = B::Slice<'a>;
 
@@ -290,30 +283,30 @@ where
     }
 }
 
-impl<'a, B, T, N> DerefMut for BufferSlice<'a, B, T, N>
+impl<'a, B, N> DerefMut for BufferSlice<'a, B, N>
 where
-    B: Buffer<T>,
+    B: Buffer,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.slice
     }
 }
 
-impl<'a, B, T, N> Drop for BufferSlice<'a, B, T, N>
+impl<'a, B, N> Drop for BufferSlice<'a, B, N>
 where
-    B: Buffer<T>,
+    B: Buffer,
 {
     fn drop(&mut self) {
         self.queue.release(self.buffer_index, self.len)
     }
 }
 
-impl<'a, B, T, N> IntoIterator for BufferSlice<'a, B, T, N>
+impl<'a, B, N> IntoIterator for BufferSlice<'a, B, N>
 where
-    B: Buffer<T> + Drainable<T>,
+    B: Buffer + Drainable,
 {
-    type Item = T;
-    type IntoIter = BufferIter<'a, B, T, N>;
+    type Item = B::Item;
+    type IntoIter = BufferIter<'a, B, N>;
 
     fn into_iter(self) -> Self::IntoIter {
         let slice = ManuallyDrop::new(self);
@@ -326,18 +319,18 @@ where
 }
 
 /// [`Buffer`] iterator returned by [`BufferSlice::into_iter`] (see [`Drainable::Drain`]).
-pub struct BufferIter<'a, B, T, N>
+pub struct BufferIter<'a, B, N>
 where
-    B: Buffer<T> + Drainable<T>,
+    B: Buffer + Drainable,
 {
-    queue: &'a SBQueue<B, T, N>,
+    queue: &'a SBQueue<B, N>,
     buffer_index: usize,
     iter: std::iter::Fuse<B::Drain<'a>>,
 }
 
-impl<'a, B, T, N> Drop for BufferIter<'a, B, T, N>
+impl<'a, B, N> Drop for BufferIter<'a, B, N>
 where
-    B: Buffer<T> + Drainable<T>,
+    B: Buffer + Drainable,
 {
     fn drop(&mut self) {
         while self.iter.next().is_some() {}
@@ -345,11 +338,11 @@ where
     }
 }
 
-impl<'a, B, T, N> Iterator for BufferIter<'a, B, T, N>
+impl<'a, B, N> Iterator for BufferIter<'a, B, N>
 where
-    B: Buffer<T> + Drainable<T>,
+    B: Buffer + Drainable,
 {
-    type Item = T;
+    type Item = B::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next()
@@ -360,9 +353,9 @@ where
     }
 }
 
-impl<'a, B, T, N> ExactSizeIterator for BufferIter<'a, B, T, N>
+impl<'a, B, N> ExactSizeIterator for BufferIter<'a, B, N>
 where
-    B: Buffer<T> + Drainable<T>,
+    B: Buffer + Drainable,
     B::Drain<'a>: ExactSizeIterator,
 {
 }

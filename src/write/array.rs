@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::{
-    buffer::Buffer,
+    buffer::{Buffer, BufferValue},
     utils::ArrayWithHeaderAndTrailer,
     write::{BytesSlice, WriteBytesSlice},
 };
@@ -23,16 +23,10 @@ impl<const N: usize, const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Defaul
     }
 }
 
-unsafe impl<T, const N: usize, const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Buffer<T>
+unsafe impl<const N: usize, const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Buffer
     for WriteArrayBuffer<N, HEADER_SIZE, TRAILER_SIZE>
-where
-    T: WriteBytesSlice,
 {
     type Slice<'a> = BytesSlice<'a, HEADER_SIZE, TRAILER_SIZE>;
-
-    fn value_size(value: &T) -> usize {
-        value.size()
-    }
 
     fn capacity(&self) -> usize {
         N
@@ -40,13 +34,28 @@ where
 
     fn debug(&self, _debug_struct: &mut fmt::DebugStruct) {}
 
-    unsafe fn insert(&mut self, index: usize, mut value: T) {
-        value.write(&mut self.0[HEADER_SIZE + index..HEADER_SIZE + index + value.size()])
-    }
-
     unsafe fn slice(&mut self, len: usize) -> Self::Slice<'_> {
         BytesSlice::new(&mut self.0[..HEADER_SIZE + len + TRAILER_SIZE])
     }
 
     unsafe fn clear(&mut self, _len: usize) {}
+}
+
+unsafe impl<T, const N: usize, const HEADER_SIZE: usize, const TRAILER_SIZE: usize>
+    BufferValue<WriteArrayBuffer<N, HEADER_SIZE, TRAILER_SIZE>> for T
+where
+    T: WriteBytesSlice,
+{
+    fn size(&self) -> usize {
+        WriteBytesSlice::size(self)
+    }
+
+    unsafe fn insert_into(
+        self,
+        buffer: &mut WriteArrayBuffer<N, HEADER_SIZE, TRAILER_SIZE>,
+        index: usize,
+    ) {
+        let size = self.size();
+        self.write(&mut buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + size]);
+    }
 }
