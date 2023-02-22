@@ -13,7 +13,7 @@ use crate::{
 
 /// An asynchronous notifier.
 #[derive(Debug, Default)]
-pub struct AsyncNotifier<const EAGER: bool = true> {
+pub struct AsyncNotifier<const EAGER: bool = false> {
     waker: AtomicWaker,
     notify: tokio::sync::Notify,
 }
@@ -30,7 +30,7 @@ impl<const EAGER: bool> Notify for AsyncNotifier<EAGER> {
     }
 }
 
-impl<B> SBQueue<B, AsyncNotifier>
+impl<B, const EAGER: bool> SBQueue<B, AsyncNotifier<EAGER>>
 where
     B: Buffer,
 {
@@ -118,7 +118,7 @@ where
     /// assert_eq!(task.await.unwrap().unwrap_err(), DequeueError::Closed);
     /// # })
     /// ```
-    pub async fn dequeue(&self) -> Result<BufferSlice<B, AsyncNotifier>, DequeueError> {
+    pub async fn dequeue(&self) -> Result<BufferSlice<B, AsyncNotifier<EAGER>>, DequeueError> {
         future::poll_fn(|cx| {
             match self.try_dequeue() {
                 Ok(buf) => return Poll::Ready(Ok(buf)),

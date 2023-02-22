@@ -38,7 +38,7 @@ impl<const EAGER: bool> Notify for SyncNotifier<EAGER> {
     }
 }
 
-impl<B> SBQueue<B, SyncNotifier>
+impl<B, const EAGER: bool> SBQueue<B, SyncNotifier<EAGER>>
 where
     B: Buffer,
 {
@@ -176,7 +176,7 @@ where
     fn dequeue_internal(
         &self,
         mut timeout: Option<Duration>,
-    ) -> Result<BufferSlice<B, SyncNotifier>, TryDequeueError> {
+    ) -> Result<BufferSlice<B, SyncNotifier<EAGER>>, TryDequeueError> {
         match self.try_dequeue() {
             Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
             res => return res,
@@ -233,7 +233,7 @@ where
     pub fn try_dequeue_timeout(
         &self,
         timeout: Duration,
-    ) -> Result<BufferSlice<B, SyncNotifier>, TryDequeueError> {
+    ) -> Result<BufferSlice<B, SyncNotifier<EAGER>>, TryDequeueError> {
         self.dequeue_internal(Some(timeout))
     }
 
@@ -268,7 +268,7 @@ where
     /// queue.close();
     /// assert_eq!(task.join().unwrap().unwrap_err(), DequeueError::Closed);
     /// ```
-    pub fn dequeue(&self) -> Result<BufferSlice<B, SyncNotifier>, DequeueError> {
+    pub fn dequeue(&self) -> Result<BufferSlice<B, SyncNotifier<EAGER>>, DequeueError> {
         match self.dequeue_internal(None) {
             Ok(buf) => Ok(buf),
             Err(TryDequeueError::Closed) => Err(DequeueError::Closed),
