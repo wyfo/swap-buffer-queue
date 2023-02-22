@@ -293,7 +293,7 @@ where
             Ordering::AcqRel,
             Ordering::Relaxed,
         ) {
-            buffer_remain = s
+            buffer_remain = s;
         }
         self.notify.notify_enqueue();
         let len = capacity - ((buffer_remain & !CLOSED_FLAG) >> 1);

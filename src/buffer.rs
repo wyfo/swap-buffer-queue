@@ -173,7 +173,7 @@ where
     pub(crate) unsafe fn clear(&self, len: usize) {
         debug_assert_eq!(self.len(), len);
         (*self.buffer.get()).clear(len);
-        self.len.store(0, Ordering::Release)
+        self.len.store(0, Ordering::Release);
     }
 }
 
@@ -192,7 +192,7 @@ where
     pub(crate) unsafe fn resize(&self, capacity: usize) {
         debug_assert_eq!(self.len(), 0);
         if capacity != self.capacity() {
-            (*self.buffer.get()).resize(capacity)
+            (*self.buffer.get()).resize(capacity);
         }
     }
 }
@@ -297,7 +297,7 @@ where
     B: Buffer,
 {
     fn drop(&mut self) {
-        self.queue.release(self.buffer_index, self.len)
+        self.queue.release(self.buffer_index, self.len);
     }
 }
 

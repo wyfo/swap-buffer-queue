@@ -181,10 +181,10 @@ impl<'a> DerefMut for VectoredFrame<'a> {
 impl<'a> Drop for VectoredFrame<'a> {
     fn drop(&mut self) {
         if let Some(header) = self.header {
-            self.slices[0] = header
+            self.slices[0] = header;
         }
         if let Some(trailer) = self.trailer {
-            self.slices[self.slices.len() - 1] = trailer
+            self.slices[self.slices.len() - 1] = trailer;
         }
     }
 }
