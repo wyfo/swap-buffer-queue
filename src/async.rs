@@ -73,6 +73,12 @@ where
     where
         T: BufferValue<B>,
     {
+        match self.try_enqueue(value) {
+            Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
+                value = v
+            }
+            res => return res,
+        };
         loop {
             let notified = self.notify().notify.notified();
             match self.try_enqueue(value) {
@@ -119,13 +125,13 @@ where
     /// # })
     /// ```
     pub async fn dequeue(&self) -> Result<BufferSlice<B, AsyncNotifier<EAGER>>, DequeueError> {
+        match self.try_dequeue() {
+            Ok(buf) => return Ok(buf),
+            Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
+            Err(TryDequeueError::Closed) => return Err(DequeueError::Closed),
+            Err(TryDequeueError::Conflict) => return Err(DequeueError::Conflict),
+        }
         future::poll_fn(|cx| {
-            match self.try_dequeue() {
-                Ok(buf) => return Poll::Ready(Ok(buf)),
-                Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
-                Err(TryDequeueError::Closed) => return Poll::Ready(Err(DequeueError::Closed)),
-                Err(TryDequeueError::Conflict) => return Poll::Ready(Err(DequeueError::Conflict)),
-            }
             self.notify().waker.register(cx.waker());
             match self.try_dequeue() {
                 Ok(buf) => Poll::Ready(Ok(buf)),
