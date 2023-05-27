@@ -132,20 +132,14 @@ unsafe impl<B> Sync for BufferWithLen<B> where B: Buffer {}
 impl<B> UnwindSafe for BufferWithLen<B> where B: Buffer {}
 impl<B> RefUnwindSafe for BufferWithLen<B> where B: Buffer {}
 
-impl<B> Deref for BufferWithLen<B>
-where
-    B: Buffer,
-{
-    type Target = B;
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.buffer.get() }
-    }
-}
-
 impl<B> BufferWithLen<B>
 where
     B: Buffer,
 {
+    pub(crate) fn capacity(&self) -> usize {
+        unsafe { &*self.buffer.get() }.capacity()
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.len.load(Ordering::Relaxed)
     }
