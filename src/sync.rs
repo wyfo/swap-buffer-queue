@@ -26,13 +26,13 @@ pub struct SyncNotifier<const EAGER: bool = true> {
 
 impl<const EAGER: bool> Notify for SyncNotifier<EAGER> {
     fn notify_dequeue(&self, may_be_ready: bool) {
-        if (EAGER || may_be_ready) && self.dequeue_waiting.swap(false, Ordering::Relaxed) {
+        if (EAGER || may_be_ready) && self.dequeue_waiting.swap(false, Ordering::AcqRel) {
             self.cond_var.notify_all();
         }
     }
 
     fn notify_enqueue(&self) {
-        if self.enqueue_waiting.swap(false, Ordering::Relaxed) {
+        if self.enqueue_waiting.swap(false, Ordering::AcqRel) {
             self.cond_var.notify_all();
         }
     }
@@ -84,7 +84,7 @@ where
                 Err(TryEnqueueError::InsufficientCapacity(v)) => value = v,
                 res => return res,
             };
-            self.notify().enqueue_waiting.store(true, Ordering::Relaxed);
+            self.notify().enqueue_waiting.store(true, Ordering::Release);
             match self.wait_until(lock, start, timeout.as_mut()) {
                 Some(l) => lock = l,
                 None => return Err(TryEnqueueError::InsufficientCapacity(value)),
@@ -188,7 +188,7 @@ where
                 Err(err @ (TryDequeueError::Empty | TryDequeueError::Pending)) => err,
                 res => return res,
             };
-            self.notify().dequeue_waiting.store(true, Ordering::Relaxed);
+            self.notify().dequeue_waiting.store(true, Ordering::Release);
             match self.wait_until(lock, start, timeout.as_mut()) {
                 Some(l) => lock = l,
                 None => return Err(err),

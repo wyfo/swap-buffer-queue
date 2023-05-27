@@ -93,7 +93,7 @@ where
     }
 
     fn current_buffer(&self) -> &BufferWithLen<B> {
-        &self.buffers[self.buffer_remain.load(Ordering::Relaxed) & 1]
+        &self.buffers[self.buffer_remain.load(Ordering::Acquire) & 1]
     }
 
     /// Returns the current buffer capacity.
@@ -149,7 +149,7 @@ where
     /// assert!(queue.is_closed());
     /// ```
     pub fn is_closed(&self) -> bool {
-        self.buffer_remain.load(Ordering::Relaxed) & CLOSED_FLAG != 0
+        self.buffer_remain.load(Ordering::Acquire) & CLOSED_FLAG != 0
     }
 
     /// Reopen a closed queue.
@@ -167,14 +167,13 @@ where
     /// assert!(!queue.is_closed());
     /// ```
     pub fn reopen(&self) {
-        self.buffer_remain
-            .fetch_and(!CLOSED_FLAG, Ordering::Relaxed);
+        self.buffer_remain.fetch_and(!CLOSED_FLAG, Ordering::AcqRel);
     }
 
     pub(crate) fn release(&self, buffer_index: usize, len: usize) {
         unsafe { self.buffers[buffer_index].clear(len) };
         self.pending_dequeue
-            .store(!buffer_index & 1, Ordering::Relaxed);
+            .store(!buffer_index & 1, Ordering::Release);
     }
 }
 
@@ -209,7 +208,7 @@ where
         T: BufferValue<B>,
     {
         let shifted_size = value.size() << 1;
-        let mut buffer_remain = self.buffer_remain.load(Ordering::Relaxed);
+        let mut buffer_remain = self.buffer_remain.load(Ordering::Acquire);
         loop {
             if buffer_remain & CLOSED_FLAG != 0 {
                 return Err(TryEnqueueError::Closed(value));
@@ -221,7 +220,7 @@ where
                 buffer_remain,
                 buffer_remain - shifted_size,
                 Ordering::AcqRel,
-                Ordering::Relaxed,
+                Ordering::Acquire,
             ) {
                 Ok(_) => break,
                 Err(s) => buffer_remain = s,
@@ -246,7 +245,7 @@ where
             hint::spin_loop();
         }
         self.pending_dequeue
-            .store(buffer_index | (len << 1), Ordering::Relaxed);
+            .store(buffer_index | (len << 1), Ordering::Release);
         None
     }
 
@@ -255,7 +254,7 @@ where
         resize: Option<impl FnOnce(&BufferWithLen<B>) -> usize>,
         insert: Option<impl FnOnce(&BufferWithLen<B>) -> usize>,
     ) -> Result<BufferSlice<B, N>, TryDequeueError> {
-        let pending_dequeue = self.pending_dequeue.swap(usize::MAX, Ordering::Relaxed);
+        let pending_dequeue = self.pending_dequeue.swap(usize::MAX, Ordering::AcqRel);
         if pending_dequeue == usize::MAX {
             return Err(TryDequeueError::Conflict);
         }
@@ -272,11 +271,11 @@ where
         if ((buffer_remain & !CLOSED_FLAG) >> 1) == capacity {
             if buffer_remain & CLOSED_FLAG != 0 {
                 self.pending_dequeue
-                    .store(pending_dequeue, Ordering::Relaxed);
+                    .store(pending_dequeue, Ordering::Release);
                 return Err(TryDequeueError::Closed);
             } else if !swap_if_empty {
                 self.pending_dequeue
-                    .store(pending_dequeue, Ordering::Relaxed);
+                    .store(pending_dequeue, Ordering::Release);
                 return Err(TryDequeueError::Empty);
             }
         }
@@ -291,7 +290,7 @@ where
             buffer_remain,
             next_buffer_remain | (buffer_remain & CLOSED_FLAG),
             Ordering::AcqRel,
-            Ordering::Relaxed,
+            Ordering::Acquire,
         ) {
             buffer_remain = s;
         }
@@ -299,7 +298,7 @@ where
         let len = capacity - ((buffer_remain & !CLOSED_FLAG) >> 1);
         if swap_if_empty && len == 0 {
             self.pending_dequeue
-                .store(!buffer_index & 1, Ordering::Relaxed);
+                .store(!buffer_index & 1, Ordering::Release);
             return Err(TryDequeueError::Empty);
         }
         self.try_dequeue_spin(buffer_index, len)
@@ -371,7 +370,7 @@ where
     /// assert_eq!(queue.try_dequeue().unwrap_err(), TryDequeueError::Closed);
     /// ```
     pub fn close(&self) {
-        self.buffer_remain.fetch_or(CLOSED_FLAG, Ordering::Relaxed);
+        self.buffer_remain.fetch_or(CLOSED_FLAG, Ordering::AcqRel);
         self.notify.notify_dequeue(true);
         self.notify.notify_enqueue();
     }
@@ -548,7 +547,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug_struct = f.debug_struct("SBQueue");
-        self.buffers[self.buffer_remain.load(Ordering::Relaxed) & 1].debug(&mut debug_struct);
+        self.buffers[self.buffer_remain.load(Ordering::Acquire) & 1].debug(&mut debug_struct);
         debug_struct.field("notify", &self.notify);
         debug_struct.finish()
     }

@@ -141,7 +141,7 @@ where
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.len.load(Ordering::Relaxed)
+        self.len.load(Ordering::Acquire)
     }
 
     pub(crate) fn debug(&self, debug_struct: &mut fmt::DebugStruct) {
