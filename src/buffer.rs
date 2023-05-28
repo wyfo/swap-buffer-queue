@@ -158,7 +158,7 @@ where
         let size = value.size();
         value.insert_into(&mut *self.buffer.get(), index);
         let prev_len = self.len.fetch_add(size, Ordering::AcqRel);
-        prev_len == index
+        prev_len >= index
     }
 
     pub(crate) unsafe fn slice(&self, len: usize) -> B::Slice<'_> {
