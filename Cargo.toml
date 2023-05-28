@@ -15,11 +15,12 @@ write-vectored = ["std"]
 futures = { version = "0.3", optional = true }
 tokio = { version = "1", features = ["sync"], optional = true }
 
-[target.'cfg(loom)'.dependencies]
-loom = { version = "0.5", features = ["futures"] }
-
 [dev-dependencies]
 tokio-test = "0.4"
+
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.5"
+
 
 # See tokio Cargo.toml
 [package.metadata.docs.rs]
