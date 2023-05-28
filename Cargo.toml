@@ -15,6 +15,9 @@ write-vectored = ["std"]
 futures = { version = "0.3", optional = true }
 tokio = { version = "1", features = ["sync"], optional = true }
 
+[target.'cfg(loom)'.dependencies]
+loom = { version = "0.5", features = ["futures"] }
+
 [dev-dependencies]
 tokio-test = "0.4"
 

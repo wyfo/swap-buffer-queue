@@ -1,3 +1,7 @@
+// #![warn(missing_debug_implementations)]
+// #![deny(clippy::dbg_macro)]
+// #![deny(clippy::map_unwrap_or)]
+// #![deny(clippy::semicolon_if_nothing_returned)]
 #![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -40,6 +44,7 @@ mod queue;
 pub mod r#async;
 pub mod buffer;
 pub mod error;
+mod loom;
 pub mod notify;
 #[cfg(feature = "sync")]
 #[cfg_attr(docsrs, doc(cfg(feature = "sync")))]

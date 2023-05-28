@@ -1,15 +1,17 @@
-use std::{
-    fmt, hint,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::{fmt, hint};
 
 use crate::{
     buffer::{Buffer, BufferSlice, BufferValue, BufferWithLen, Drainable, Resizable},
     error::{TryDequeueError, TryEnqueueError},
+    loom::{AtomicUsize, Ordering},
     notify::Notify,
 };
 
 const CLOSED_FLAG: usize = (usize::MAX >> 1) + 1;
+#[cfg(not(loom))]
+const SPIN_LIMIT: i32 = 100;
+#[cfg(loom)]
+const SPIN_LIMIT: i32 = 1;
 
 /// A buffered MPSC "swap-buffer" queue.
 pub struct SBQueue<B, N = ()>
@@ -236,7 +238,7 @@ where
     fn try_dequeue_spin(&self, buffer_index: usize, len: usize) -> Option<BufferSlice<B, N>> {
         assert_ne!(len, 0);
         let buffer = &self.buffers[buffer_index];
-        for _ in 0..100 {
+        for _ in 0..SPIN_LIMIT {
             if buffer.len() == len {
                 return Some(BufferSlice::new(self, buffer_index, len, unsafe {
                     buffer.slice(len)

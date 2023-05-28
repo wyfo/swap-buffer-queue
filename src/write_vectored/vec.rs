@@ -1,13 +1,8 @@
-use std::{
-    fmt,
-    io::IoSlice,
-    mem,
-    mem::MaybeUninit,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::{fmt, io::IoSlice, mem, mem::MaybeUninit};
 
 use crate::{
     buffer::{Buffer, BufferValue, Drainable, Resizable},
+    loom::{AtomicUsize, Ordering},
     write_vectored::{VectoredSlice, EMPTY_SLICE},
 };
 

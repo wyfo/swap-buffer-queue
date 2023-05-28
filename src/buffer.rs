@@ -6,10 +6,12 @@ use std::{
     mem::ManuallyDrop,
     ops::{Deref, DerefMut},
     panic::{RefUnwindSafe, UnwindSafe},
-    sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crate::queue::SBQueue;
+use crate::{
+    loom::{AtomicUsize, Ordering},
+    queue::SBQueue,
+};
 
 #[cfg(feature = "buffer")]
 #[cfg_attr(docsrs, doc(cfg(feature = "buffer")))]

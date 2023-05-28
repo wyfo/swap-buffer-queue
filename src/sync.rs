@@ -1,16 +1,11 @@
 //! Synchronous implementation of [`SBQueue`].
 
-use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Condvar, Mutex, MutexGuard,
-    },
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use crate::{
     buffer::{Buffer, BufferSlice, BufferValue},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
+    loom::{AtomicBool, Condvar, Mutex, MutexGuard, Ordering},
     notify::Notify,
     queue::SBQueue,
 };
