@@ -8,6 +8,8 @@ use std::{
     panic::{RefUnwindSafe, UnwindSafe},
 };
 
+use crossbeam_utils::CachePadded;
+
 use crate::{
     loom::{AtomicUsize, Ordering},
     queue::SBQueue,
@@ -126,7 +128,7 @@ where
     B: Buffer,
 {
     buffer: UnsafeCell<B>,
-    len: AtomicUsize,
+    len: CachePadded<AtomicUsize>,
 }
 
 unsafe impl<B> Send for BufferWithLen<B> where B: Buffer {}

@@ -1,5 +1,7 @@
 use std::{fmt, hint};
 
+use crossbeam_utils::CachePadded;
+
 use crate::{
     buffer::{Buffer, BufferSlice, BufferValue, BufferWithLen, Drainable, Resizable},
     error::{TryDequeueError, TryEnqueueError},
@@ -18,8 +20,8 @@ pub struct SBQueue<B, N = ()>
 where
     B: Buffer,
 {
-    buffer_remain: AtomicUsize,
-    pending_dequeue: AtomicUsize,
+    buffer_remain: CachePadded<AtomicUsize>,
+    pending_dequeue: CachePadded<AtomicUsize>,
     buffers: [BufferWithLen<B>; 2],
     notify: N,
 }
@@ -41,8 +43,8 @@ where
     /// ```
     pub fn new() -> Self {
         Self {
-            buffer_remain: AtomicUsize::new(0),
-            pending_dequeue: AtomicUsize::new(0),
+            buffer_remain: AtomicUsize::new(0).into(),
+            pending_dequeue: AtomicUsize::new(0).into(),
             buffers: Default::default(),
             notify: Default::default(),
         }
@@ -64,8 +66,8 @@ where
     /// ```
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            buffer_remain: AtomicUsize::new(capacity << 1),
-            pending_dequeue: AtomicUsize::new(0),
+            buffer_remain: AtomicUsize::new(capacity << 1).into(),
+            pending_dequeue: AtomicUsize::new(0).into(),
             buffers: [
                 BufferWithLen::with_capacity(capacity),
                 BufferWithLen::with_capacity(capacity),

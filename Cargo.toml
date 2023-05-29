@@ -12,10 +12,12 @@ write = []
 write-vectored = ["std"]
 
 [dependencies]
+crossbeam-utils = { version = "0.8", default-features = false }
 futures = { version = "0.3", optional = true }
 tokio = { version = "1", features = ["sync"], optional = true }
 
 [dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "time"] }
 tokio-test = "0.4"
 
 [target.'cfg(loom)'.dev-dependencies]
