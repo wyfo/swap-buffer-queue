@@ -395,9 +395,7 @@ where
     /// it is also possible to add values in it before making it available for enqueuing.
     /// This can be used to make the queue [unbounded](SBQueue#an-amortized-unbounded-recipe).
     ///
-    /// It is  worth to be noted that buffer is resized even if the queue is empty; in this case,
-    /// buffer will be swapped, whereas it would not be the case with
-    /// [`try_dequeue`](SBQueue::try_dequeue) method call on an empty queue.
+    /// It is worth to be noted that only one buffer is resized, so it can lead to asymmetric buffers.
     ///
     /// # Examples
     /// ```
@@ -498,23 +496,26 @@ where
     /// ```
     pub fn try_dequeue_and_resize<T>(
         &self,
-        capacity: usize,
+        capacity: impl Into<Option<usize>>,
         insert: Option<impl Iterator<Item = T>>,
     ) -> Result<BufferSlice<B, N>, TryDequeueError>
     where
         T: BufferValue<B>,
     {
+        let capacity = capacity.into();
         self.try_dequeue_internal(
-            Some(|buf: &BufferWithLen<B>| {
-                unsafe { buf.resize(capacity) };
-                capacity
+            capacity.map(|capa| {
+                move |buf: &BufferWithLen<B>| {
+                    unsafe { buf.resize(capa) };
+                    capa
+                }
             }),
             insert.map(|insert| {
                 |buf: &BufferWithLen<B>| {
-                    let mut next_capa = capacity;
+                    let mut next_capa = buf.capacity();
                     for (i, value) in insert.enumerate() {
                         let value_size = value.size();
-                        if value_size > capacity {
+                        if value_size > buf.capacity() {
                             break;
                         }
                         unsafe { buf.insert(i, value) };
