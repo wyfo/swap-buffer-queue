@@ -42,10 +42,12 @@ where
     /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::new();
     /// ```
     pub fn new() -> Self {
+        let buffers: [BufferWithLen<B>; 2] = Default::default();
+        let capacity = buffers[0].capacity();
         Self {
-            buffer_remain: AtomicUsize::new(0).into(),
+            buffer_remain: AtomicUsize::new(capacity << 1).into(),
             pending_dequeue: AtomicUsize::new(0).into(),
-            buffers: Default::default(),
+            buffers,
             notify: Default::default(),
         }
     }
