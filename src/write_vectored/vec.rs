@@ -8,6 +8,7 @@ use crate::{
 
 /// A buffer of [`IoSlice`]
 pub struct WriteVectoredVecBuffer<T> {
+    // Owned buffer is needed because `write_vectored_all` takes `&mut [IoSlice]`
     owned: Box<[MaybeUninit<T>]>,
     slices: Box<[IoSlice<'static>]>,
     total_size: AtomicUsize,
