@@ -54,7 +54,7 @@ pub use vec::WriteVecBuffer;
 /// # use swap_buffer_queue::SBQueue;
 /// # use swap_buffer_queue::write::{BytesSlice, WriteBytesSlice, WriteVecBuffer};
 /// # let queue: SBQueue<WriteVecBuffer<2, 4>> = SBQueue::with_capacity(42);
-/// # queue.try_enqueue((4, |slice: &mut [u8]| slice.copy_from_slice(&[2, 3, 4, 5]))).ok().unwrap();
+/// # queue.try_enqueue(&[2u8, 3, 4, 5] as &[_]).ok().unwrap();
 /// let mut slice: BufferSlice<WriteVecBuffer<2, 4>, _> /* = ... */;
 /// # slice = queue.try_dequeue().unwrap();
 /// assert_eq!(slice.deref().deref(), &[2, 3, 4, 5]);
@@ -125,6 +125,15 @@ pub trait WriteBytesSlice {
     fn size(&self) -> usize;
     /// Writes the slice.
     fn write(self, slice: &mut [u8]);
+}
+
+impl WriteBytesSlice for &[u8] {
+    fn size(&self) -> usize {
+        self.len()
+    }
+    fn write(self, slice: &mut [u8]) {
+        slice.copy_from_slice(self.as_ref());
+    }
 }
 
 impl<F> WriteBytesSlice for (usize, F)
