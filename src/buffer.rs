@@ -3,8 +3,10 @@
 use std::{
     cell::UnsafeCell,
     fmt,
+    iter::FusedIterator,
+    mem,
     mem::ManuallyDrop,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Range},
     panic::{RefUnwindSafe, UnwindSafe},
 };
 
@@ -33,14 +35,8 @@ pub use vec::VecBuffer;
 /// [`SBQueue`] buffer. It is used together with [`BufferValue`].
 ///
 /// # Safety
-/// This trait is meant to be used inside an [`UnsafeCell`], that's why it doesn't follow safe Rust
-/// borrowing rules.
-/// - [`capacity`](Buffer::capacity) and [`debug`](Buffer::debug) methods must be safe to call
-/// concurrently to other methods receiving mutable reference, e.g. [`clear`](Buffer::clear).
-/// - [`BufferValue::insert_into`] may be called multiple times **concurrently**.
-///
-/// The rest behaves *normally*, i.e. [`slice`](Buffer::slice) method borrow a mutable reference,
-/// which must be released to call [`clear`](Buffer::clear), etc.
+/// [`Buffer::clear`] *clears* the inserted range (see [`BufferValue::insert_into`]),
+/// meaning new values can be inserted.
 pub unsafe trait Buffer: Default {
     /// The slice type returned by [`slice`](Buffer::slice) method.
     type Slice<'a>
@@ -53,73 +49,55 @@ pub unsafe trait Buffer: Default {
     /// Returns a slice of the buffer.
     ///
     /// # Safety
-    /// Half-open interval [0,`len`) **must** have been inserted (see [`BufferValue::insert_into`])
-    /// before calling this method.
-    unsafe fn slice(&mut self, len: usize) -> Self::Slice<'_>;
+    /// Range **must** have been inserted (see [`BufferValue::insert_into`]) before calling
+    /// this method.
+    unsafe fn slice(&mut self, range: Range<usize>) -> Self::Slice<'_>;
     /// Clears the buffer.
     ///
     /// # Safety
-    /// Half-open interval [0,`len`) **must** have been inserted (see [`BufferValue::insert_into`])
-    /// before calling this method.
+    /// Range **must** have been inserted (see [`BufferValue::insert_into`]) before calling
+    /// this method.
     ///
-    /// Calling this method *clears* the inserted value, i.e. inserted interval is reset to [0, 0),
-    /// meaning new value can be inserted.
-    unsafe fn clear(&mut self, len: usize);
+    /// Calling this method *clears* the inserted value, meaning new values can be inserted.
+    unsafe fn clear(&mut self, range: Range<usize>);
 }
 
 /// [`Buffer`] value.
 ///
 /// # Safety
-/// [`BufferValue::insert_into`] may be called multiple times **concurrently** (see
-/// [`Buffer` safety section](Buffer#safety).
+/// Range `index..index+value.size()` is considered inserted into the buffer after calling
+/// [`BufferValue::insert_into`] (see [`Buffer::slice`]/[`Buffer::clear`])
 pub unsafe trait BufferValue<B: Buffer> {
     /// Return the size taken by a value in the buffer.
     fn size(&self) -> usize;
     /// Inserts the value into the buffer at the given index.
     ///
     /// # Safety
-    /// Every call to this method **must** have a non overlapping half-open interval
-    /// [`index`,`index+Buffer::value_size(&value)`).
-    unsafe fn insert_into(self, buffer: &mut B, index: usize);
+    /// For every call to this method, the inserted range `index..index+value.size()` **must not**
+    /// overlap with a previously inserted one.
+    unsafe fn insert_into(self, buffer: &UnsafeCell<B>, index: usize);
 }
 
 /// Resizable [`Buffer`].
-///
-/// # Safety
-/// The trait extends [`Buffer`] contract, with [`resize`](Resizable::resize) method following the
-/// same rule as [`Buffer::clear`]. It means that [`Buffer::capacity`] can be called concurrently,
-/// but not [`BufferValue::insert_into`] or [`Buffer::clear`].
-pub unsafe trait Resizable: Buffer {
+pub trait Resize: Buffer {
     /// Resizes the buffer.
-    ///
-    /// # Safety
-    /// This method may be called before any insertion with [`BufferValue::insert_into`];
-    /// it must not be called before [`Buffer::clear`] (or [`Drainable::drain`]).
-    unsafe fn resize(&mut self, capacity: usize);
+    fn resize(&mut self, capacity: usize);
 }
 
-/// [`Buffer`] whose value can be removed and returned as an iterator.
+/// [`Buffer`] whose values can be drained from.
 ///
 /// # Safety
-/// The trait extends [`Buffer`] contract, with [`drain`](Drainable::drain) method following the
-/// same rule as [`Buffer::clear`]. It means that [`Buffer::capacity`] can be called concurrently,
-/// but not [`BufferValue::insert_into`] or [`Buffer::clear`].
-pub unsafe trait Drainable: Buffer {
-    /// [`Drain`](Drainable::Drain) iterator item type.
-    type Item;
-    /// The iterator type returned by [`drain`](Drainable::drain).
-    type Drain<'a>: Iterator<Item = Self::Item>
-    where
-        Self: 'a;
-    /// Removes all elements of the buffer and returns them as an iterator.
+/// Calling [`Buffer::remove`] decreased the inserted range (see [`BufferValue::insert_into`])
+/// by the size of the removed value.
+pub unsafe trait Drain: Buffer {
+    /// Value to be removed from the buffer
+    type Value;
+    /// Remove a value from the buffer at a given index and return it with its size.
     ///
     /// # Safety
-    /// Half-open interval [0,`len`) **must** have been inserted (see [`BufferValue::insert_into`])
+    /// A value **must** have been inserted at this index (see [`BufferValue::insert_into`])
     /// before calling this method.
-    ///
-    /// The iterator returned must be exhausted before calling another mutable method;
-    /// it must have the same effect than calling [`Buffer::clear`].
-    unsafe fn drain(&mut self, len: usize) -> Self::Drain<'_>;
+    unsafe fn remove(&mut self, index: usize) -> (Self::Value, usize);
 }
 
 #[derive(Default)]
@@ -129,6 +107,8 @@ where
 {
     buffer: UnsafeCell<B>,
     len: CachePadded<AtomicUsize>,
+    #[cfg(debug_assertions)]
+    removed: AtomicUsize,
 }
 
 unsafe impl<B> Send for BufferWithLen<B> where B: Buffer {}
@@ -158,31 +138,35 @@ where
         T: BufferValue<B>,
     {
         let size = value.size();
-        value.insert_into(&mut *self.buffer.get(), index);
+        value.insert_into(&self.buffer, index);
         let prev_len = self.len.fetch_add(size, Ordering::AcqRel);
         prev_len >= index
     }
 
-    pub(crate) unsafe fn slice(&self, len: usize) -> B::Slice<'_> {
-        debug_assert_eq!(self.len(), len);
-        (*self.buffer.get()).slice(len)
+    pub(crate) unsafe fn slice(&self, range: Range<usize>) -> B::Slice<'_> {
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(range, self.removed.load(Ordering::Acquire)..self.len());
+        (*self.buffer.get()).slice(range)
     }
 
-    pub(crate) unsafe fn clear(&self, len: usize) {
-        debug_assert_eq!(self.len(), len);
-        (*self.buffer.get()).clear(len);
+    pub(crate) unsafe fn clear(&self, range: Range<usize>) {
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(range, self.removed.load(Ordering::Acquire)..self.len());
+        (*self.buffer.get()).clear(range);
         self.len.store(0, Ordering::Release);
+        #[cfg(debug_assertions)]
+        self.removed.store(0, Ordering::Release);
     }
 }
 
 impl<B> BufferWithLen<B>
 where
-    B: Buffer + Resizable,
+    B: Buffer + Resize,
 {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         let mut buf = Self::default();
         if capacity > 0 {
-            unsafe { buf.buffer.get_mut().resize(capacity) };
+            buf.buffer.get_mut().resize(capacity);
         }
         buf
     }
@@ -197,26 +181,21 @@ where
 
 impl<B> BufferWithLen<B>
 where
-    B: Buffer + Drainable,
+    B: Buffer + Drain,
 {
-    pub(crate) unsafe fn drain(&self, len: usize) -> B::Drain<'_> {
-        debug_assert_eq!(self.len(), len);
-        let drain = (*self.buffer.get()).drain(len);
-        self.len.store(0, Ordering::Release);
-        drain
-    }
-}
-
-impl<B> Drop for BufferWithLen<B>
-where
-    B: Buffer,
-{
-    fn drop(&mut self) {
-        unsafe { self.clear(self.len()) };
+    pub(crate) unsafe fn remove(&self, index: usize) -> (B::Value, usize) {
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(index, self.removed.load(Ordering::Acquire));
+        #[cfg(debug_assertions)]
+        debug_assert!(self.removed.fetch_add(1, Ordering::AcqRel) <= self.len());
+        (*self.buffer.get()).remove(index)
     }
 }
 
 /// [`Buffer`] slice returned by [`SBQueue::try_dequeue`] (see [`Buffer::Slice`]).
+///
+/// Buffer is released when the slice is dropped, so the other buffer will be dequeued next,
+/// unless [`BufferSlice::Requeue`]/[`BufferSlice::into_iter`] is called.
 ///
 /// # Examples
 /// ```
@@ -237,7 +216,7 @@ where
 {
     queue: &'a SBQueue<B, N>,
     buffer_index: usize,
-    len: usize,
+    range: Range<usize>,
     slice: B::Slice<'a>,
 }
 
@@ -248,15 +227,39 @@ where
     pub(crate) fn new(
         queue: &'a SBQueue<B, N>,
         buffer_index: usize,
-        len: usize,
+        range: Range<usize>,
         slice: B::Slice<'a>,
     ) -> Self {
         Self {
             queue,
             buffer_index,
-            len,
+            range,
             slice,
         }
+    }
+
+    /// Reinsert the buffer at the beginning queue.
+    ///
+    /// It will thus de dequeued again next.
+    ///
+    /// # Examples
+    /// ```
+    /// # use std::ops::Deref;
+    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::buffer::VecBuffer;
+    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue(1).unwrap();
+    ///
+    /// let slice = queue.try_dequeue().unwrap();
+    /// assert_eq!(slice.deref(), &[0, 1]);
+    /// slice.requeue();
+    /// let slice = queue.try_dequeue().unwrap();
+    /// assert_eq!(slice.deref(), &[0, 1]);
+    /// ```
+    pub fn requeue(self) {
+        self.queue.requeue(self.buffer_index, self.range.clone());
+        mem::forget(self);
     }
 }
 
@@ -295,15 +298,15 @@ where
     B: Buffer,
 {
     fn drop(&mut self) {
-        self.queue.release(self.buffer_index, self.len);
+        self.queue.release(self.buffer_index, self.range.clone());
     }
 }
 
 impl<'a, B, N> IntoIterator for BufferSlice<'a, B, N>
 where
-    B: Buffer + Drainable,
+    B: Buffer + Drain,
 {
-    type Item = B::Item;
+    type Item = B::Value;
     type IntoIter = BufferIter<'a, B, N>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -311,49 +314,70 @@ where
         BufferIter {
             queue: slice.queue,
             buffer_index: slice.buffer_index,
-            iter: slice.queue.drain(slice.buffer_index, slice.len).fuse(),
+            range: slice.range.clone(),
         }
     }
 }
 
-/// [`Buffer`] iterator returned by [`BufferSlice::into_iter`] (see [`Drainable::Drain`]).
+/// [`Buffer`] iterator returned by [`BufferSlice::into_iter`] (see [`Drain`]).
+///
+/// Buffer is lazily drained, and requeued (see [`BufferSlice::requeue`]) if the iterator is dropped while non exhausted.
+///
+/// # Examples
+/// ```
+/// # use std::ops::Deref;
+/// # use swap_buffer_queue::SBQueue;
+/// # use swap_buffer_queue::buffer::VecBuffer;
+/// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+/// queue.try_enqueue(0).unwrap();
+/// queue.try_enqueue(1).unwrap();
+///
+/// let mut iter = queue.try_dequeue().unwrap().into_iter();
+/// assert_eq!(iter.next(), Some(0));
+/// drop(iter);
+/// let mut iter = queue.try_dequeue().unwrap().into_iter();
+/// assert_eq!(iter.next(), Some(1));
+/// assert_eq!(iter.next(), None);
+/// ```
 pub struct BufferIter<'a, B, N>
 where
-    B: Buffer + Drainable,
+    B: Buffer + Drain,
 {
     queue: &'a SBQueue<B, N>,
     buffer_index: usize,
-    iter: std::iter::Fuse<B::Drain<'a>>,
+    range: Range<usize>,
 }
 
 impl<'a, B, N> Drop for BufferIter<'a, B, N>
 where
-    B: Buffer + Drainable,
+    B: Buffer + Drain,
 {
     fn drop(&mut self) {
-        while self.iter.next().is_some() {}
-        self.queue.release(self.buffer_index, 0);
+        self.queue.requeue(self.buffer_index, self.range.clone());
     }
 }
 
 impl<'a, B, N> Iterator for BufferIter<'a, B, N>
 where
-    B: Buffer + Drainable,
+    B: Buffer + Drain,
 {
-    type Item = B::Item;
+    type Item = B::Value;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next()
+        if self.range.is_empty() {
+            return None;
+        }
+        let (value, size) = self.queue.remove(self.buffer_index, self.range.start);
+        self.range.start += size;
+        debug_assert!(self.range.start <= self.range.end);
+        Some(value)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.iter.size_hint()
+        self.range.size_hint()
     }
 }
 
-impl<'a, B, N> ExactSizeIterator for BufferIter<'a, B, N>
-where
-    B: Buffer + Drainable,
-    B::Drain<'a>: ExactSizeIterator,
-{
-}
+impl<'a, B, N> ExactSizeIterator for BufferIter<'a, B, N> where B: Buffer + Drain {}
+
+impl<'a, B, N> FusedIterator for BufferIter<'a, B, N> where B: Buffer + Drain {}

@@ -1,9 +1,9 @@
-use std::{fmt, hint};
+use std::{fmt, hint, ops::Range};
 
 use crossbeam_utils::CachePadded;
 
 use crate::{
-    buffer::{Buffer, BufferSlice, BufferValue, BufferWithLen, Drainable, Resizable},
+    buffer::{Buffer, BufferSlice, BufferValue, BufferWithLen, Drain, Resize},
     error::{TryDequeueError, TryEnqueueError},
     loom::{AtomicUsize, Ordering},
     notify::Notify,
@@ -55,7 +55,7 @@ where
 
 impl<B, N> SBQueue<B, N>
 where
-    B: Buffer + Resizable,
+    B: Buffer + Resize,
     N: Default,
 {
     /// Creates a new queue with the given capacity.
@@ -176,10 +176,38 @@ where
         self.buffer_remain.fetch_and(!CLOSED_FLAG, Ordering::AcqRel);
     }
 
-    pub(crate) fn release(&self, buffer_index: usize, len: usize) {
-        unsafe { self.buffers[buffer_index].clear(len) };
+    fn try_dequeue_spin(&self, buffer_index: usize, len: usize) -> Option<BufferSlice<B, N>> {
+        assert_ne!(len, 0);
+        let buffer = &self.buffers[buffer_index];
+        for _ in 0..SPIN_LIMIT {
+            let buffer_len = buffer.len();
+            if buffer_len >= len {
+                let range = buffer_len - len..buffer_len;
+                let slice = unsafe { buffer.slice(range.clone()) };
+                return Some(BufferSlice::new(self, buffer_index, range, slice));
+            }
+            hint::spin_loop();
+        }
+        self.pending_dequeue
+            .store(buffer_index | (len << 1), Ordering::Release);
+        None
+    }
+
+    pub(crate) fn release(&self, buffer_index: usize, range: Range<usize>) {
+        unsafe { self.buffers[buffer_index].clear(range) };
         self.pending_dequeue
             .store(!buffer_index & 1, Ordering::Release);
+    }
+
+    pub(crate) fn requeue(&self, buffer_index: usize, range: Range<usize>) {
+        if range.is_empty() {
+            self.release(buffer_index, range);
+        } else {
+            self.pending_dequeue.store(
+                buffer_index | ((range.end - range.start) << 1),
+                Ordering::Release,
+            );
+        }
     }
 }
 
@@ -237,22 +265,6 @@ where
         let may_be_ready = unsafe { buffer.insert(index, value) };
         self.notify.notify_dequeue(may_be_ready);
         Ok(())
-    }
-
-    fn try_dequeue_spin(&self, buffer_index: usize, len: usize) -> Option<BufferSlice<B, N>> {
-        assert_ne!(len, 0);
-        let buffer = &self.buffers[buffer_index];
-        for _ in 0..SPIN_LIMIT {
-            if buffer.len() == len {
-                return Some(BufferSlice::new(self, buffer_index, len, unsafe {
-                    buffer.slice(len)
-                }));
-            }
-            hint::spin_loop();
-        }
-        self.pending_dequeue
-            .store(buffer_index | (len << 1), Ordering::Release);
-        None
     }
 
     fn try_dequeue_internal(
@@ -384,7 +396,7 @@ where
 
 impl<B, N> SBQueue<B, N>
 where
-    B: Buffer + Resizable,
+    B: Buffer + Resize,
     N: Notify,
 {
     /// Tries dequeuing a buffer with all enqueued values from the queue, and resizes the next
@@ -530,10 +542,10 @@ where
 
 impl<B, N> SBQueue<B, N>
 where
-    B: Buffer + Drainable,
+    B: Buffer + Drain,
 {
-    pub(crate) fn drain(&self, buffer_index: usize, len: usize) -> B::Drain<'_> {
-        unsafe { self.buffers[buffer_index].drain(len) }
+    pub(crate) fn remove(&self, buffer_index: usize, index: usize) -> (B::Value, usize) {
+        unsafe { self.buffers[buffer_index].remove(index) }
     }
 }
 
@@ -557,5 +569,18 @@ where
         self.buffers[self.buffer_remain.load(Ordering::Acquire) & 1].debug(&mut debug_struct);
         debug_struct.field("notify", &self.notify);
         debug_struct.finish()
+    }
+}
+
+impl<B, N> Drop for SBQueue<B, N>
+where
+    B: Buffer,
+{
+    fn drop(&mut self) {
+        let pending_dequeue = self.pending_dequeue.swap(usize::MAX, Ordering::Relaxed);
+        let buffer_index = pending_dequeue & 1;
+        if pending_dequeue != usize::MAX && pending_dequeue >> 1 != 0 {
+            self.try_dequeue_spin(buffer_index, pending_dequeue >> 1);
+        }
     }
 }

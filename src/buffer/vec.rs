@@ -1,6 +1,6 @@
-use std::{fmt, mem, mem::MaybeUninit};
+use std::{cell::UnsafeCell, fmt, mem, mem::MaybeUninit, ops::Range};
 
-use crate::buffer::{Buffer, BufferValue, Drainable, Resizable};
+use crate::buffer::{Buffer, BufferValue, Drain, Resize};
 
 /// A simple vector buffer.
 pub struct VecBuffer<T>(Box<[MaybeUninit<T>]>);
@@ -24,12 +24,12 @@ unsafe impl<T> Buffer for VecBuffer<T> {
         debug_struct.field("capacity", &self.capacity());
     }
 
-    unsafe fn slice(&mut self, len: usize) -> Self::Slice<'_> {
-        unsafe { mem::transmute(&mut self.0[..len]) }
+    unsafe fn slice(&mut self, range: Range<usize>) -> Self::Slice<'_> {
+        unsafe { mem::transmute(&mut self.0[range]) }
     }
 
-    unsafe fn clear(&mut self, len: usize) {
-        for value in &mut self.0[..len] {
+    unsafe fn clear(&mut self, range: Range<usize>) {
+        for value in &mut self.0[range] {
             unsafe { value.assume_init_drop() };
         }
     }
@@ -40,27 +40,22 @@ unsafe impl<T> BufferValue<VecBuffer<T>> for T {
         1
     }
 
-    unsafe fn insert_into(self, buffer: &mut VecBuffer<T>, index: usize) {
+    unsafe fn insert_into(self, buffer: &UnsafeCell<VecBuffer<T>>, index: usize) {
+        let buffer = &mut *buffer.get();
         buffer.0[index].write(self);
     }
 }
 
-unsafe impl<T> Resizable for VecBuffer<T> {
-    unsafe fn resize(&mut self, capacity: usize) {
+impl<T> Resize for VecBuffer<T> {
+    fn resize(&mut self, capacity: usize) {
         self.0 = (0..capacity).map(|_| MaybeUninit::uninit()).collect();
     }
 }
 
-unsafe impl<T> Drainable for VecBuffer<T> {
-    type Item = T;
-    type Drain<'a> =
-        std::iter::Map<std::slice::IterMut<'a, MaybeUninit<T>>, fn(&mut MaybeUninit<T>) -> T>
-    where
-        T: 'a;
+unsafe impl<T> Drain for VecBuffer<T> {
+    type Value = T;
 
-    unsafe fn drain(&mut self, len: usize) -> Self::Drain<'_> {
-        self.0[..len]
-            .iter_mut()
-            .map(|value| unsafe { value.assume_init_read() })
+    unsafe fn remove(&mut self, index: usize) -> (Self::Value, usize) {
+        (self.0[index].assume_init_read(), 1)
     }
 }

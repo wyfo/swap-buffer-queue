@@ -1,7 +1,7 @@
-use std::fmt;
+use std::{cell::UnsafeCell, fmt, ops::Range};
 
 use crate::{
-    buffer::{Buffer, BufferValue, Resizable},
+    buffer::{Buffer, BufferValue, Resize},
     write::{BytesSlice, WriteBytesSlice},
 };
 
@@ -22,11 +22,11 @@ unsafe impl<const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Buffer
         debug_struct.field("capacity", &self.capacity());
     }
 
-    unsafe fn slice(&mut self, len: usize) -> Self::Slice<'_> {
-        BytesSlice::new(&mut self.0[..HEADER_SIZE + len + TRAILER_SIZE])
+    unsafe fn slice(&mut self, range: Range<usize>) -> Self::Slice<'_> {
+        BytesSlice::new(&mut self.0[range.start..HEADER_SIZE + range.end + TRAILER_SIZE])
     }
 
-    unsafe fn clear(&mut self, _len: usize) {}
+    unsafe fn clear(&mut self, _range: Range<usize>) {}
 }
 
 unsafe impl<T, const HEADER_SIZE: usize, const TRAILER_SIZE: usize>
@@ -40,18 +40,19 @@ where
 
     unsafe fn insert_into(
         self,
-        buffer: &mut WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>,
+        buffer: &UnsafeCell<WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>>,
         index: usize,
     ) {
+        let buffer = &mut *buffer.get();
         let size = self.size();
         self.write(&mut buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + size]);
     }
 }
 
-unsafe impl<const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Resizable
+impl<const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Resize
     for WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>
 {
-    unsafe fn resize(&mut self, capacity: usize) {
+    fn resize(&mut self, capacity: usize) {
         self.0 = vec![0; HEADER_SIZE + capacity + TRAILER_SIZE].into();
     }
 }

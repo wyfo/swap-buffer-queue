@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{cell::UnsafeCell, fmt, ops::Range};
 
 use crate::{
     buffer::{Buffer, BufferValue},
@@ -34,11 +34,11 @@ unsafe impl<const N: usize, const HEADER_SIZE: usize, const TRAILER_SIZE: usize>
 
     fn debug(&self, _debug_struct: &mut fmt::DebugStruct) {}
 
-    unsafe fn slice(&mut self, len: usize) -> Self::Slice<'_> {
-        BytesSlice::new(&mut self.0[..HEADER_SIZE + len + TRAILER_SIZE])
+    unsafe fn slice(&mut self, range: Range<usize>) -> Self::Slice<'_> {
+        BytesSlice::new(&mut self.0[range.start..HEADER_SIZE + range.end + TRAILER_SIZE])
     }
 
-    unsafe fn clear(&mut self, _len: usize) {}
+    unsafe fn clear(&mut self, _range: Range<usize>) {}
 }
 
 unsafe impl<T, const N: usize, const HEADER_SIZE: usize, const TRAILER_SIZE: usize>
@@ -52,9 +52,10 @@ where
 
     unsafe fn insert_into(
         self,
-        buffer: &mut WriteArrayBuffer<N, HEADER_SIZE, TRAILER_SIZE>,
+        buffer: &UnsafeCell<WriteArrayBuffer<N, HEADER_SIZE, TRAILER_SIZE>>,
         index: usize,
     ) {
+        let buffer = &mut *buffer.get();
         let size = self.size();
         self.write(&mut buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + size]);
     }
