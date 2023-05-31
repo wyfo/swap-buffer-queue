@@ -1,9 +1,12 @@
 //! Synchronous implementation of [`SBQueue`].
 
-use std::time::{Duration, Instant};
+use std::{
+    iter,
+    time::{Duration, Instant},
+};
 
 use crate::{
-    buffer::{Buffer, BufferSlice, BufferValue},
+    buffer::{Buffer, BufferSlice, BufferValue, Drain},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
     loom::{AtomicBool, Condvar, Mutex, MutexGuard, Ordering},
     notify::Notify,
@@ -270,5 +273,77 @@ where
             Err(TryDequeueError::Conflict) => Err(DequeueError::Conflict),
             Err(TryDequeueError::Empty | TryDequeueError::Pending) => unreachable!(),
         }
+    }
+}
+
+impl<B, const EAGER: bool> SBQueue<B, SyncNotifier<EAGER>>
+where
+    B: Buffer + Drain,
+{
+    /// Returns an iterator over the element of the queue (see [`BufferIter`]).
+    ///
+    /// # Examples
+    /// ```
+    /// # use swap_buffer_queue::SyncSBQueue;
+    /// # use swap_buffer_queue::buffer::VecBuffer;
+    /// let queue: SyncSBQueue<VecBuffer<usize>> = SyncSBQueue::with_capacity(42);
+    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue(1).unwrap();
+    ///
+    /// let mut iter = queue.iter();
+    /// assert_eq!(iter.next(), Some(0));
+    /// drop(iter);
+    /// let mut iter = queue.iter();
+    /// assert_eq!(iter.next(), Some(1));
+    /// queue.close(); // close in order to stop the iterator
+    /// assert_eq!(iter.next(), None);
+    /// ```
+    pub fn iter(&self) -> impl Iterator<Item = B::Value> + '_ {
+        iter::repeat_with(|| self.dequeue())
+            .map_while(|res| res.ok())
+            .flatten()
+    }
+}
+
+impl<B, const EAGER: bool> IntoIterator for SBQueue<B, SyncNotifier<EAGER>>
+where
+    B: Buffer + Drain,
+{
+    type Item = B::Value;
+    type IntoIter = IntoIter<B, EAGER>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        IntoIter(self)
+    }
+}
+
+/// Owned iterator over the element of the queue (see [`BufferIter`]).
+///
+/// # Examples
+/// ```
+/// # use swap_buffer_queue::SyncSBQueue;
+/// # use swap_buffer_queue::buffer::VecBuffer;
+/// let queue: SyncSBQueue<VecBuffer<usize>> = SyncSBQueue::with_capacity(42);
+/// queue.try_enqueue(0).unwrap();
+/// queue.try_enqueue(1).unwrap();
+/// queue.close(); // close in order to stop the iterator
+///
+/// let mut iter = queue.into_iter();
+/// assert_eq!(iter.next(), Some(0));
+/// assert_eq!(iter.next(), Some(1));
+/// assert_eq!(iter.next(), None);
+/// ```
+pub struct IntoIter<B, const EAGER: bool>(SBQueue<B, SyncNotifier<EAGER>>)
+where
+    B: Buffer + Drain;
+
+impl<B, const EAGER: bool> Iterator for IntoIter<B, EAGER>
+where
+    B: Buffer + Drain,
+{
+    type Item = B::Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.dequeue().ok()?.into_iter().next()
     }
 }

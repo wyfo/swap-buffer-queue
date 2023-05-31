@@ -68,7 +68,7 @@ pub unsafe trait Buffer: Default {
 /// Range `index..index+value.size()` is considered inserted into the buffer after calling
 /// [`BufferValue::insert_into`] (see [`Buffer::slice`]/[`Buffer::clear`])
 pub unsafe trait BufferValue<B: Buffer> {
-    /// Return the size taken by a value in the buffer.
+    /// Returns the size taken by a value in the buffer.
     fn size(&self) -> usize;
     /// Inserts the value into the buffer at the given index.
     ///
@@ -92,7 +92,7 @@ pub trait Resize: Buffer {
 pub unsafe trait Drain: Buffer {
     /// Value to be removed from the buffer
     type Value;
-    /// Remove a value from the buffer at a given index and return it with its size.
+    /// Removes a value from the buffer at a given index and return it with its size.
     ///
     /// # Safety
     /// A value **must** have been inserted at this index (see [`BufferValue::insert_into`])

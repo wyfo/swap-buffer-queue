@@ -1,11 +1,15 @@
 //! Asynchronous implementation of [`SBQueue`].
 
-use std::{future, task::Poll};
+use core::pin::Pin;
+use std::{
+    future,
+    task::{ready, Context, Poll},
+};
 
-use futures::task::AtomicWaker;
+use futures::{stream, task::AtomicWaker, Stream, StreamExt};
 
 use crate::{
-    buffer::{Buffer, BufferSlice, BufferValue},
+    buffer::{Buffer, BufferSlice, BufferValue, Drain},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
     notify::Notify,
     queue::SBQueue,
@@ -131,15 +135,99 @@ where
             Err(TryDequeueError::Closed) => return Err(DequeueError::Closed),
             Err(TryDequeueError::Conflict) => return Err(DequeueError::Conflict),
         }
-        future::poll_fn(|cx| {
-            self.notify().waker.register(cx.waker());
-            match self.try_dequeue() {
-                Ok(buf) => Poll::Ready(Ok(buf)),
-                Err(TryDequeueError::Empty | TryDequeueError::Pending) => Poll::Pending,
-                Err(TryDequeueError::Closed) => Poll::Ready(Err(DequeueError::Closed)),
-                Err(TryDequeueError::Conflict) => Poll::Ready(Err(DequeueError::Conflict)),
-            }
-        })
-        .await
+        future::poll_fn(|cx| self.poll_dequeue(cx)).await
+    }
+
+    /// Dequeues a buffer with all enqueued values from the queue, see [`dequeue`](SBQueue::<_, AsyncNotifier>::dequeue).
+    pub fn poll_dequeue(
+        &self,
+        cx: &mut Context,
+    ) -> Poll<Result<BufferSlice<B, AsyncNotifier<EAGER>>, DequeueError>> {
+        self.notify().waker.register(cx.waker());
+        match self.try_dequeue() {
+            Ok(buf) => Poll::Ready(Ok(buf)),
+            Err(TryDequeueError::Empty | TryDequeueError::Pending) => Poll::Pending,
+            Err(TryDequeueError::Closed) => Poll::Ready(Err(DequeueError::Closed)),
+            Err(TryDequeueError::Conflict) => Poll::Ready(Err(DequeueError::Conflict)),
+        }
+    }
+}
+
+impl<B, const EAGER: bool> SBQueue<B, AsyncNotifier<EAGER>>
+where
+    B: Buffer + Drain,
+{
+    /// Returns an stream over the element of the queue (see [`BufferIter`]).
+    ///
+    /// # Examples
+    /// ```
+    /// # use futures::StreamExt;
+    /// # use swap_buffer_queue::AsyncSBQueue;
+    /// # use swap_buffer_queue::buffer::VecBuffer;
+    /// # tokio_test::block_on(async {
+    /// let queue: AsyncSBQueue<VecBuffer<usize>> = AsyncSBQueue::with_capacity(42);
+    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue(1).unwrap();
+    ///
+    /// let mut stream = Box::pin(queue.stream());
+    /// assert_eq!(stream.next().await, Some(0));
+    /// drop(stream);
+    /// let mut stream = Box::pin(queue.stream());
+    /// assert_eq!(stream.next().await, Some(1));
+    /// queue.close(); // close in order to stop the stream
+    /// assert_eq!(stream.next().await, None);
+    /// # })
+    /// ```
+    pub fn stream(&self) -> impl Stream<Item = B::Value> + '_ {
+        stream::repeat_with(|| stream::once(self.dequeue()))
+            .flatten()
+            .take_while(|res| {
+                let is_ok = res.is_ok();
+                async move { is_ok }
+            })
+            .flat_map(|res| stream::iter(res.unwrap()))
+    }
+
+    /// Returns an owned stream over the element of the queue (see [`BufferIter`]).
+    ///
+    /// # Examples
+    /// ```
+    /// # use futures::StreamExt;
+    /// # use swap_buffer_queue::AsyncSBQueue;
+    /// # use swap_buffer_queue::buffer::VecBuffer;
+    /// # tokio_test::block_on(async {
+    /// let queue: AsyncSBQueue<VecBuffer<usize>> = AsyncSBQueue::with_capacity(42);
+    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue(1).unwrap();
+    /// queue.close(); // close in order to stop the iterator
+    ///
+    /// let mut stream = Box::pin(queue.stream());
+    /// assert_eq!(stream.next().await, Some(0));
+    /// assert_eq!(stream.next().await, Some(1));
+    /// assert_eq!(stream.next().await, None);
+    /// # })
+    /// ```
+    pub fn into_stream(self) -> impl Stream<Item = B::Value> {
+        IntoStream(self)
+    }
+}
+
+#[doc(hidden)]
+pub struct IntoStream<B, const EAGER: bool>(SBQueue<B, AsyncNotifier<EAGER>>)
+where
+    B: Buffer + Drain;
+
+impl<B, const EAGER: bool> Stream for IntoStream<B, EAGER>
+where
+    B: Buffer + Drain,
+{
+    type Item = B::Value;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Poll::Ready(
+            ready!(self.0.poll_dequeue(cx))
+                .ok()
+                .and_then(|slice| slice.into_iter().next()),
+        )
     }
 }
