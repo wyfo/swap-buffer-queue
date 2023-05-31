@@ -79,7 +79,7 @@ where
     {
         match self.try_enqueue(value) {
             Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
-                value = v
+                value = v;
             }
             res => return res,
         };
@@ -87,7 +87,7 @@ where
             let notified = self.notify().notify.notified();
             match self.try_enqueue(value) {
                 Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
-                    value = v
+                    value = v;
                 }
                 res => return res,
             };

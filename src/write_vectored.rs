@@ -79,8 +79,8 @@ pub struct VectoredSlice<'a> {
 
 impl<'a> fmt::Debug for VectoredSlice<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Vectored")
-            .field("slices", &self.slices)
+        f.debug_struct("VectoredSlice")
+            .field("slices", &self.deref())
             .field("total_size", &self.total_size)
             .finish()
     }
