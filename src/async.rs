@@ -1,9 +1,8 @@
 //! Asynchronous implementation of [`SBQueue`].
 
-use core::pin::Pin;
 use std::{
     future,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 
 use futures::{stream, task::AtomicWaker, Stream, StreamExt};
@@ -186,48 +185,5 @@ where
                 async move { is_ok }
             })
             .flat_map(|res| stream::iter(res.unwrap()))
-    }
-
-    /// Returns an owned stream over the element of the queue (see [`BufferIter`]).
-    ///
-    /// # Examples
-    /// ```
-    /// # use futures::StreamExt;
-    /// # use swap_buffer_queue::AsyncSBQueue;
-    /// # use swap_buffer_queue::buffer::VecBuffer;
-    /// # tokio_test::block_on(async {
-    /// let queue: AsyncSBQueue<VecBuffer<usize>> = AsyncSBQueue::with_capacity(42);
-    /// queue.try_enqueue(0).unwrap();
-    /// queue.try_enqueue(1).unwrap();
-    /// queue.close(); // close in order to stop the iterator
-    ///
-    /// let mut stream = Box::pin(queue.stream());
-    /// assert_eq!(stream.next().await, Some(0));
-    /// assert_eq!(stream.next().await, Some(1));
-    /// assert_eq!(stream.next().await, None);
-    /// # })
-    /// ```
-    pub fn into_stream(self) -> impl Stream<Item = B::Value> {
-        IntoStream(self)
-    }
-}
-
-#[doc(hidden)]
-pub struct IntoStream<B, const EAGER: bool>(SBQueue<B, AsyncNotifier<EAGER>>)
-where
-    B: Buffer + Drain;
-
-impl<B, const EAGER: bool> Stream for IntoStream<B, EAGER>
-where
-    B: Buffer + Drain,
-{
-    type Item = B::Value;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Poll::Ready(
-            ready!(self.0.poll_dequeue(cx))
-                .ok()
-                .and_then(|slice| slice.into_iter().next()),
-        )
     }
 }

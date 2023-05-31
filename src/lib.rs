@@ -31,6 +31,7 @@
 //! assert_eq!(slice.into_iter().collect::<Vec<_>>(), vec![0, 1]);
 //! ```
 
+extern crate alloc;
 #[cfg(not(feature = "std"))]
 extern crate core as std;
 
