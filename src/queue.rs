@@ -98,7 +98,7 @@ where
     }
 
     fn current_buffer(&self) -> &BufferWithLen<B> {
-        &self.buffers[self.buffer_remain.load(Ordering::Acquire) & 1]
+        &self.buffers[self.buffer_remain.load(Ordering::Relaxed) & 1]
     }
 
     /// Returns the current buffer capacity.
@@ -188,7 +188,7 @@ where
             }
             if backoff.is_completed() {
                 self.pending_dequeue
-                    .store(buffer_index | (len << 1), Ordering::Release);
+                    .store(buffer_index | (len << 1), Ordering::Relaxed);
                 return None;
             } else {
                 backoff.snooze();
@@ -199,7 +199,7 @@ where
     pub(crate) fn release(&self, buffer_index: usize, range: Range<usize>) {
         unsafe { self.buffers[buffer_index].clear(range) };
         self.pending_dequeue
-            .store(!buffer_index & 1, Ordering::Release);
+            .store(!buffer_index & 1, Ordering::Relaxed);
     }
 
     pub(crate) fn requeue(&self, buffer_index: usize, range: Range<usize>) {
@@ -208,7 +208,7 @@ where
         } else {
             self.pending_dequeue.store(
                 buffer_index | ((range.end - range.start) << 1),
-                Ordering::Release,
+                Ordering::Relaxed,
             );
         }
     }
@@ -257,7 +257,7 @@ where
                 buffer_remain,
                 buffer_remain - shifted_size,
                 Ordering::AcqRel,
-                Ordering::Acquire,
+                Ordering::Relaxed,
             ) {
                 Ok(_) => break,
                 Err(s) => buffer_remain = s,
@@ -275,7 +275,7 @@ where
         resize: Option<impl FnOnce(&BufferWithLen<B>) -> usize>,
         insert: Option<impl FnOnce(&BufferWithLen<B>) -> usize>,
     ) -> Result<BufferSlice<B, N>, TryDequeueError> {
-        let pending_dequeue = self.pending_dequeue.swap(usize::MAX, Ordering::AcqRel);
+        let pending_dequeue = self.pending_dequeue.swap(usize::MAX, Ordering::Relaxed);
         if pending_dequeue == usize::MAX {
             return Err(TryDequeueError::Conflict);
         }
@@ -292,11 +292,11 @@ where
         if ((buffer_remain & !CLOSED_FLAG) >> 1) == capacity {
             if buffer_remain & CLOSED_FLAG != 0 {
                 self.pending_dequeue
-                    .store(pending_dequeue, Ordering::Release);
+                    .store(pending_dequeue, Ordering::Relaxed);
                 return Err(TryDequeueError::Closed);
             } else if !swap_if_empty {
                 self.pending_dequeue
-                    .store(pending_dequeue, Ordering::Release);
+                    .store(pending_dequeue, Ordering::Relaxed);
                 return Err(TryDequeueError::Empty);
             }
         }
@@ -311,7 +311,7 @@ where
             buffer_remain,
             next_buffer_remain | (buffer_remain & CLOSED_FLAG),
             Ordering::AcqRel,
-            Ordering::Acquire,
+            Ordering::Relaxed,
         ) {
             buffer_remain = s;
         }
@@ -319,7 +319,7 @@ where
         let len = capacity - ((buffer_remain & !CLOSED_FLAG) >> 1);
         if swap_if_empty && len == 0 {
             self.pending_dequeue
-                .store(!buffer_index & 1, Ordering::Release);
+                .store(!buffer_index & 1, Ordering::Relaxed);
             return Err(TryDequeueError::Empty);
         }
         self.try_dequeue_spin(buffer_index, len)
@@ -569,7 +569,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug_struct = f.debug_struct("SBQueue");
-        self.buffers[self.buffer_remain.load(Ordering::Acquire) & 1].debug(&mut debug_struct);
+        self.buffers[self.buffer_remain.load(Ordering::Relaxed) & 1].debug(&mut debug_struct);
         debug_struct.field("notify", &self.notify);
         debug_struct.finish()
     }
@@ -580,7 +580,7 @@ where
     B: Buffer,
 {
     fn drop(&mut self) {
-        let pending_dequeue = self.pending_dequeue.swap(usize::MAX, Ordering::Relaxed);
+        let pending_dequeue = self.pending_dequeue.swap(usize::MAX, Ordering::AcqRel);
         let buffer_index = pending_dequeue & 1;
         if pending_dequeue != usize::MAX && pending_dequeue >> 1 != 0 {
             self.try_dequeue_spin(buffer_index, pending_dequeue >> 1);

@@ -125,7 +125,7 @@ where
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.len.load(Ordering::Acquire)
+        self.len.load(Ordering::Relaxed)
     }
 
     pub(crate) fn debug(&self, debug_struct: &mut fmt::DebugStruct) {
@@ -139,23 +139,23 @@ where
     {
         let size = value.size();
         value.insert_into(&self.buffer, index);
-        let prev_len = self.len.fetch_add(size, Ordering::AcqRel);
+        let prev_len = self.len.fetch_add(size, Ordering::Relaxed);
         prev_len >= index
     }
 
     pub(crate) unsafe fn slice(&self, range: Range<usize>) -> B::Slice<'_> {
         #[cfg(debug_assertions)]
-        debug_assert_eq!(range, self.removed.load(Ordering::Acquire)..self.len());
+        debug_assert_eq!(range, self.removed.load(Ordering::Relaxed)..self.len());
         (*self.buffer.get()).slice(range)
     }
 
     pub(crate) unsafe fn clear(&self, range: Range<usize>) {
         #[cfg(debug_assertions)]
-        debug_assert_eq!(range, self.removed.load(Ordering::Acquire)..self.len());
+        debug_assert_eq!(range, self.removed.load(Ordering::Relaxed)..self.len());
         (*self.buffer.get()).clear(range);
-        self.len.store(0, Ordering::Release);
+        self.len.store(0, Ordering::Relaxed);
         #[cfg(debug_assertions)]
-        self.removed.store(0, Ordering::Release);
+        self.removed.store(0, Ordering::Relaxed);
     }
 }
 
@@ -185,9 +185,9 @@ where
 {
     pub(crate) unsafe fn remove(&self, index: usize) -> (B::Value, usize) {
         #[cfg(debug_assertions)]
-        debug_assert_eq!(index, self.removed.load(Ordering::Acquire));
+        debug_assert_eq!(index, self.removed.load(Ordering::Relaxed));
         #[cfg(debug_assertions)]
-        debug_assert!(self.removed.fetch_add(1, Ordering::AcqRel) <= self.len());
+        debug_assert!(self.removed.fetch_add(1, Ordering::Relaxed) <= self.len());
         (*self.buffer.get()).remove(index)
     }
 }
