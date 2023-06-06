@@ -11,7 +11,10 @@ use futures::{stream, Stream, StreamExt};
 use crate::{
     buffer::{Buffer, BufferSlice, BufferValue, Drain},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
-    loom::{AtomicBool, Mutex, Ordering},
+    loom::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
     notify::Notify,
     queue::SBQueue,
 };

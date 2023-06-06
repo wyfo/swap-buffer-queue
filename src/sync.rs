@@ -9,7 +9,10 @@ use crossbeam_utils::CachePadded;
 use crate::{
     buffer::{Buffer, BufferSlice, BufferValue, Drain},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
-    loom::{AtomicBool, Condvar, Mutex, Ordering},
+    loom::{
+        atomic::{AtomicBool, Ordering},
+        Condvar, Mutex,
+    },
     notify::Notify,
     queue::SBQueue,
 };

@@ -5,7 +5,7 @@ use crossbeam_utils::CachePadded;
 use crate::{
     buffer::{Buffer, BufferSlice, BufferValue, BufferWithLen, Drain, Resize},
     error::{TryDequeueError, TryEnqueueError},
-    loom::{AtomicUsize, Ordering},
+    loom::atomic::{AtomicUsize, Ordering},
     notify::Notify,
 };
 

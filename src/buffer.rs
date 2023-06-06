@@ -13,7 +13,7 @@ use std::{
 use crossbeam_utils::CachePadded;
 
 use crate::{
-    loom::{AtomicUsize, Ordering},
+    loom::atomic::{AtomicUsize, Ordering},
     queue::SBQueue,
 };
 
