@@ -1,19 +1,18 @@
-use std::{fmt, hint, ops::Range};
+use std::{fmt, ops::Range};
 
 use crossbeam_utils::CachePadded;
 
 use crate::{
     buffer::{Buffer, BufferSlice, BufferValue, BufferWithLen, Drain, Resize},
     error::{TryDequeueError, TryEnqueueError},
-    loom::atomic::{AtomicUsize, Ordering},
+    loom::{
+        atomic::{AtomicUsize, Ordering},
+        Backoff,
+    },
     notify::Notify,
 };
 
 const CLOSED_FLAG: usize = (usize::MAX >> 1) + 1;
-#[cfg(not(loom))]
-const SPIN_LIMIT: i32 = 100;
-#[cfg(loom)]
-const SPIN_LIMIT: i32 = 1;
 
 /// A buffered MPSC "swap-buffer" queue.
 pub struct SBQueue<B, N = ()>
@@ -179,18 +178,22 @@ where
     fn try_dequeue_spin(&self, buffer_index: usize, len: usize) -> Option<BufferSlice<B, N>> {
         assert_ne!(len, 0);
         let buffer = &self.buffers[buffer_index];
-        for _ in 0..SPIN_LIMIT {
+        let backoff = Backoff::new();
+        loop {
             let buffer_len = buffer.len();
             if buffer_len >= len {
                 let range = buffer_len - len..buffer_len;
                 let slice = unsafe { buffer.slice(range.clone()) };
                 return Some(BufferSlice::new(self, buffer_index, range, slice));
             }
-            hint::spin_loop();
+            if backoff.is_completed() {
+                self.pending_dequeue
+                    .store(buffer_index | (len << 1), Ordering::Release);
+                return None;
+            } else {
+                backoff.snooze();
+            }
         }
-        self.pending_dequeue
-            .store(buffer_index | (len << 1), Ordering::Release);
-        None
     }
 
     pub(crate) fn release(&self, buffer_index: usize, range: Range<usize>) {

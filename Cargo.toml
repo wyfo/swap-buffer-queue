@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 buffer = []
 async = ["std", "dep:futures"]
-std = []
+std = ["crossbeam-utils/std"]
 sync = ["std"]
 write = []
 write-vectored = ["std"]
@@ -30,3 +30,14 @@ rustdoc-args = [
     "--cfg",
     "docsrs",
 ]
+
+[[bench]]
+name = "sync"
+harness = false
+
+[[bench]]
+name = "async"
+harness = false
+
+[workspace]
+members = ["benchmarks"]

@@ -11,7 +11,7 @@ use crate::{
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
     loom::{
         atomic::{AtomicBool, Ordering},
-        Condvar, Mutex,
+        Backoff, Condvar, Mutex,
     },
     notify::Notify,
     queue::SBQueue,
@@ -76,12 +76,22 @@ where
         T: BufferValue<B>,
     {
         loop {
-            match self.try_enqueue(value) {
-                Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
-                    value = v;
+            let backoff = Backoff::new();
+            loop {
+                match self.try_enqueue(value) {
+                    Err(TryEnqueueError::InsufficientCapacity(v))
+                        if v.size() <= self.capacity() =>
+                    {
+                        value = v;
+                    }
+                    res => return res,
+                };
+                if backoff.is_completed() {
+                    break;
+                } else {
+                    backoff.snooze();
                 }
-                res => return res,
-            };
+            }
             self.notify().enqueue_waiting.store(true, Ordering::SeqCst);
             match self.try_enqueue(value) {
                 Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
@@ -187,9 +197,17 @@ where
         deadline: Option<Instant>,
     ) -> Result<BufferSlice<B, SyncNotifier<EAGER>>, TryDequeueError> {
         loop {
-            match self.try_dequeue() {
-                Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
-                res => return res,
+            let backoff = Backoff::new();
+            loop {
+                match self.try_dequeue() {
+                    Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
+                    res => return res,
+                }
+                if backoff.is_completed() {
+                    break;
+                } else {
+                    backoff.snooze();
+                }
             }
             self.notify().dequeue_waiting.store(true, Ordering::SeqCst);
             match self.try_dequeue() {

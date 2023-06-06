@@ -13,7 +13,7 @@ use crate::{
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
     loom::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Backoff, Mutex,
     },
     notify::Notify,
     queue::SBQueue,
@@ -109,12 +109,22 @@ where
         T: BufferValue<B>,
     {
         loop {
-            match self.try_enqueue(value) {
-                Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
-                    value = v;
+            let backoff = Backoff::new();
+            loop {
+                match self.try_enqueue(value) {
+                    Err(TryEnqueueError::InsufficientCapacity(v))
+                        if v.size() <= self.capacity() =>
+                    {
+                        value = v;
+                    }
+                    res => return res,
+                };
+                if backoff.is_completed() {
+                    break;
+                } else {
+                    backoff.snooze();
                 }
-                res => return res,
-            };
+            }
             self.notify().enqueue_waiting.store(true, Ordering::SeqCst);
             match self.try_enqueue(value) {
                 Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
@@ -163,11 +173,19 @@ where
     /// ```
     pub async fn dequeue(&self) -> Result<BufferSlice<B, AsyncNotifier<EAGER>>, DequeueError> {
         loop {
-            match self.try_dequeue() {
-                Ok(buf) => return Ok(buf),
-                Err(TryDequeueError::Closed) => return Err(DequeueError::Closed),
-                Err(TryDequeueError::Conflict) => return Err(DequeueError::Conflict),
-                Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
+            let backoff = Backoff::new();
+            loop {
+                match self.try_dequeue() {
+                    Ok(buf) => return Ok(buf),
+                    Err(TryDequeueError::Closed) => return Err(DequeueError::Closed),
+                    Err(TryDequeueError::Conflict) => return Err(DequeueError::Conflict),
+                    Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
+                }
+                if backoff.is_completed() {
+                    break;
+                } else {
+                    backoff.snooze();
+                }
             }
             self.notify().dequeue_waiting.store(true, Ordering::SeqCst);
             match self.try_dequeue() {
