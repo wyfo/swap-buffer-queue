@@ -6,7 +6,6 @@ edition = "2021"
 [features]
 buffer = []
 async = ["std", "dep:futures"]
-parking_lot = ["std", "dep:parking_lot"]
 std = []
 sync = ["std"]
 write = []
@@ -15,7 +14,6 @@ write-vectored = ["std"]
 [dependencies]
 crossbeam-utils = { version = "0.8", default-features = false }
 futures = { version = "0.3", optional = true }
-parking_lot = {version = "0.12", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
