@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 buffer = []
-async = ["std", "dep:futures", "dep:tokio"]
+async = ["std", "dep:futures"]
 std = []
 sync = ["std"]
 write = []
@@ -14,11 +14,10 @@ write-vectored = ["std"]
 [dependencies]
 crossbeam-utils = { version = "0.8", default-features = false }
 futures = { version = "0.3", optional = true }
-tokio = { version = "1", features = ["sync"], optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "time"] }
 tokio-test = "0.4"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "time"] }
 
 [target.'cfg(loom)'.dev-dependencies]
 loom = "0.5"

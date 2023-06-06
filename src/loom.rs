@@ -5,7 +5,7 @@ use std::sync::atomic;
 #[cfg(not(all(loom, test)))]
 pub(crate) use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(not(all(loom, test)))]
-#[cfg(feature = "sync")]
+#[cfg(feature = "std")]
 pub(crate) use std::sync::{atomic::AtomicBool, Condvar, Mutex, MutexGuard};
 
 #[cfg(all(loom, test))]

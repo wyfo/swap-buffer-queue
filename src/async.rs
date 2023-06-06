@@ -1,15 +1,17 @@
 //! Asynchronous implementation of [`SBQueue`].
 
 use std::{
-    future,
-    task::{Context, Poll},
+    future::poll_fn,
+    task::{Poll, Waker},
 };
 
-use futures::{stream, task::AtomicWaker, Stream, StreamExt};
+use crossbeam_utils::CachePadded;
+use futures::{stream, Stream, StreamExt};
 
 use crate::{
     buffer::{Buffer, BufferSlice, BufferValue, Drain},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
+    loom::{AtomicBool, Mutex, Ordering},
     notify::Notify,
     queue::SBQueue,
 };
@@ -17,19 +19,46 @@ use crate::{
 /// An asynchronous notifier.
 #[derive(Debug, Default)]
 pub struct AsyncNotifier<const EAGER: bool = false> {
-    waker: AtomicWaker,
-    notify: tokio::sync::Notify,
+    wakers: Mutex<Vec<Waker>>,
+    dequeue_waiting: CachePadded<AtomicBool>,
+    enqueue_waiting: CachePadded<AtomicBool>,
+}
+
+impl<const EAGER: bool> AsyncNotifier<EAGER> {
+    async fn wait_until(&self, waiting: &AtomicBool) {
+        poll_fn(|cx| {
+            let mut wakers = self.wakers.lock().unwrap();
+            if !waiting.load(Ordering::SeqCst) {
+                return Poll::Ready(());
+            }
+            wakers.push(cx.waker().clone());
+            Poll::Pending
+        })
+        .await;
+    }
+
+    fn notify(&self, waiting: &AtomicBool) {
+        if waiting.load(Ordering::Relaxed)
+            && waiting
+                .compare_exchange(true, false, Ordering::SeqCst, Ordering::Relaxed)
+                .is_ok()
+        {
+            for waker in self.wakers.lock().unwrap().drain(..) {
+                waker.wake();
+            }
+        }
+    }
 }
 
 impl<const EAGER: bool> Notify for AsyncNotifier<EAGER> {
     fn notify_dequeue(&self, may_be_ready: bool) {
         if EAGER || may_be_ready {
-            self.waker.wake();
+            self.notify(&self.dequeue_waiting);
         }
     }
 
     fn notify_enqueue(&self) {
-        self.notify.notify_waiters();
+        self.notify(&self.enqueue_waiting);
     }
 }
 
@@ -76,21 +105,23 @@ where
     where
         T: BufferValue<B>,
     {
-        match self.try_enqueue(value) {
-            Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
-                value = v;
-            }
-            res => return res,
-        };
         loop {
-            let notified = self.notify().notify.notified();
             match self.try_enqueue(value) {
                 Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
                     value = v;
                 }
                 res => return res,
             };
-            notified.await;
+            self.notify().enqueue_waiting.store(true, Ordering::SeqCst);
+            match self.try_enqueue(value) {
+                Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
+                    value = v;
+                }
+                res => return res,
+            };
+            self.notify()
+                .wait_until(&self.notify().enqueue_waiting)
+                .await;
         }
     }
 
@@ -128,26 +159,23 @@ where
     /// # })
     /// ```
     pub async fn dequeue(&self) -> Result<BufferSlice<B, AsyncNotifier<EAGER>>, DequeueError> {
-        match self.try_dequeue() {
-            Ok(buf) => return Ok(buf),
-            Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
-            Err(TryDequeueError::Closed) => return Err(DequeueError::Closed),
-            Err(TryDequeueError::Conflict) => return Err(DequeueError::Conflict),
-        }
-        future::poll_fn(|cx| self.poll_dequeue(cx)).await
-    }
-
-    /// Dequeues a buffer with all enqueued values from the queue, see [`dequeue`](SBQueue::<_, AsyncNotifier>::dequeue).
-    pub fn poll_dequeue(
-        &self,
-        cx: &mut Context,
-    ) -> Poll<Result<BufferSlice<B, AsyncNotifier<EAGER>>, DequeueError>> {
-        self.notify().waker.register(cx.waker());
-        match self.try_dequeue() {
-            Ok(buf) => Poll::Ready(Ok(buf)),
-            Err(TryDequeueError::Empty | TryDequeueError::Pending) => Poll::Pending,
-            Err(TryDequeueError::Closed) => Poll::Ready(Err(DequeueError::Closed)),
-            Err(TryDequeueError::Conflict) => Poll::Ready(Err(DequeueError::Conflict)),
+        loop {
+            match self.try_dequeue() {
+                Ok(buf) => return Ok(buf),
+                Err(TryDequeueError::Closed) => return Err(DequeueError::Closed),
+                Err(TryDequeueError::Conflict) => return Err(DequeueError::Conflict),
+                Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
+            }
+            self.notify().dequeue_waiting.store(true, Ordering::SeqCst);
+            match self.try_dequeue() {
+                Ok(buf) => return Ok(buf),
+                Err(TryDequeueError::Closed) => return Err(DequeueError::Closed),
+                Err(TryDequeueError::Conflict) => return Err(DequeueError::Conflict),
+                Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
+            }
+            self.notify()
+                .wait_until(&self.notify().dequeue_waiting)
+                .await;
         }
     }
 }

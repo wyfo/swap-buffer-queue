@@ -1,14 +1,15 @@
 //! Synchronous implementation of [`SBQueue`].
-
 use std::{
     iter,
     time::{Duration, Instant},
 };
 
+use crossbeam_utils::CachePadded;
+
 use crate::{
     buffer::{Buffer, BufferSlice, BufferValue, Drain},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
-    loom::{AtomicBool, Condvar, Mutex, MutexGuard, Ordering},
+    loom::{AtomicBool, Condvar, Mutex, Ordering},
     notify::Notify,
     queue::SBQueue,
 };
@@ -18,21 +19,44 @@ use crate::{
 pub struct SyncNotifier<const EAGER: bool = true> {
     cond_var: Condvar,
     lock: Mutex<()>,
-    enqueue_waiting: AtomicBool,
-    dequeue_waiting: AtomicBool,
+    dequeue_waiting: CachePadded<AtomicBool>,
+    enqueue_waiting: CachePadded<AtomicBool>,
+}
+
+impl<const EAGER: bool> SyncNotifier<EAGER> {
+    fn wait_until(&self, waiting: &AtomicBool, deadline: Option<Instant>) -> bool {
+        let mut lock = self.lock.lock().unwrap();
+        while waiting.load(Ordering::SeqCst) {
+            lock = match deadline.map(|d| d.checked_duration_since(Instant::now())) {
+                Some(Some(timeout)) => self.cond_var.wait_timeout(lock, timeout).unwrap().0,
+                Some(None) => return false,
+                None => self.cond_var.wait(lock).unwrap(),
+            };
+        }
+        true
+    }
+
+    fn notify(&self, waiting: &AtomicBool) {
+        if waiting.load(Ordering::Relaxed)
+            && waiting
+                .compare_exchange(true, false, Ordering::SeqCst, Ordering::Relaxed)
+                .is_ok()
+        {
+            let _lock = self.lock.lock().unwrap();
+            self.cond_var.notify_all();
+        }
+    }
 }
 
 impl<const EAGER: bool> Notify for SyncNotifier<EAGER> {
     fn notify_dequeue(&self, may_be_ready: bool) {
-        if (EAGER || may_be_ready) && self.dequeue_waiting.swap(false, Ordering::AcqRel) {
-            self.cond_var.notify_all();
+        if EAGER || may_be_ready {
+            self.notify(&self.dequeue_waiting);
         }
     }
 
     fn notify_enqueue(&self) {
-        if self.enqueue_waiting.swap(false, Ordering::AcqRel) {
-            self.cond_var.notify_all();
-        }
+        self.notify(&self.enqueue_waiting);
     }
 }
 
@@ -40,52 +64,33 @@ impl<B, const EAGER: bool> SBQueue<B, SyncNotifier<EAGER>>
 where
     B: Buffer,
 {
-    fn wait_until<'a>(
-        &self,
-        lock: MutexGuard<'a, ()>,
-        start: Instant,
-        timeout: Option<&mut Duration>,
-    ) -> Option<MutexGuard<'a, ()>> {
-        Some(if let Some(timeout) = timeout {
-            match timeout.checked_sub(start.elapsed()) {
-                Some(t) => *timeout = t,
-                None => return None,
-            }
-            self.notify()
-                .cond_var
-                .wait_timeout(lock, *timeout)
-                .unwrap()
-                .0
-        } else {
-            self.notify().cond_var.wait(lock).unwrap()
-        })
-    }
-
     fn enqueue_internal<T>(
         &self,
         mut value: T,
-        mut timeout: Option<Duration>,
+        deadline: Option<Instant>,
     ) -> Result<(), TryEnqueueError<T>>
     where
         T: BufferValue<B>,
     {
-        match self.try_enqueue(value) {
-            Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
-                value = v;
-            }
-            res => return res,
-        };
-        let mut lock = self.notify().lock.lock().unwrap();
-        let start = Instant::now();
         loop {
             match self.try_enqueue(value) {
-                Err(TryEnqueueError::InsufficientCapacity(v)) => value = v,
+                Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
+                    value = v;
+                }
                 res => return res,
             };
-            self.notify().enqueue_waiting.store(true, Ordering::Release);
-            match self.wait_until(lock, start, timeout.as_mut()) {
-                Some(l) => lock = l,
-                None => return Err(TryEnqueueError::InsufficientCapacity(value)),
+            self.notify().enqueue_waiting.store(true, Ordering::SeqCst);
+            match self.try_enqueue(value) {
+                Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= self.capacity() => {
+                    value = v;
+                }
+                res => return res,
+            };
+            if !self
+                .notify()
+                .wait_until(&self.notify().enqueue_waiting, deadline)
+            {
+                return self.try_enqueue(value);
             }
         }
     }
@@ -128,7 +133,7 @@ where
     where
         T: BufferValue<B>,
     {
-        self.enqueue_internal(value, Some(timeout))
+        self.enqueue_internal(value, Some(Instant::now() + timeout))
     }
 
     /// Enqueues the given value inside the queue.
@@ -141,6 +146,7 @@ where
     /// ```
     /// # use std::ops::Deref;
     /// # use std::sync::Arc;
+    /// # use std::time::Duration;
     /// # use swap_buffer_queue::SyncSBQueue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::{EnqueueError, TryEnqueueError};
@@ -153,6 +159,7 @@ where
     /// // queue is full, let's spawn an enqueuing task and dequeue
     /// let queue_clone = queue.clone();
     /// let task = std::thread::spawn(move || queue_clone.enqueue(1));
+    /// std::thread::sleep(Duration::from_millis(1));
     /// assert_eq!(queue.try_dequeue().unwrap().deref(), &[0]);
     /// // enqueuing task has succeeded
     /// task.join().unwrap().unwrap();
@@ -161,6 +168,7 @@ where
     /// queue.try_enqueue(2).unwrap();
     /// let queue_clone = queue.clone();
     /// let task = std::thread::spawn(move || queue_clone.enqueue(3));
+    /// std::thread::sleep(Duration::from_millis(1));
     /// queue.close();
     /// assert_eq!(task.join().unwrap(), Err(EnqueueError::Closed(3)));
     /// ```
@@ -173,23 +181,23 @@ where
 
     fn dequeue_internal(
         &self,
-        mut timeout: Option<Duration>,
+        deadline: Option<Instant>,
     ) -> Result<BufferSlice<B, SyncNotifier<EAGER>>, TryDequeueError> {
-        match self.try_dequeue() {
-            Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
-            res => return res,
-        }
-        let mut lock = self.notify().lock.lock().unwrap();
-        let start = Instant::now();
         loop {
-            let err = match self.try_dequeue() {
-                Err(err @ (TryDequeueError::Empty | TryDequeueError::Pending)) => err,
+            match self.try_dequeue() {
+                Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
                 res => return res,
-            };
-            self.notify().dequeue_waiting.store(true, Ordering::Release);
-            match self.wait_until(lock, start, timeout.as_mut()) {
-                Some(l) => lock = l,
-                None => return Err(err),
+            }
+            self.notify().dequeue_waiting.store(true, Ordering::SeqCst);
+            match self.try_dequeue() {
+                Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
+                res => return res,
+            }
+            if !self
+                .notify()
+                .wait_until(&self.notify().dequeue_waiting, deadline)
+            {
+                return self.try_dequeue();
             }
         }
     }
@@ -232,7 +240,7 @@ where
         &self,
         timeout: Duration,
     ) -> Result<BufferSlice<B, SyncNotifier<EAGER>>, TryDequeueError> {
-        self.dequeue_internal(Some(timeout))
+        self.dequeue_internal(Some(Instant::now() + timeout))
     }
 
     /// Dequeues a buffer with all enqueued values from the queue.
@@ -302,5 +310,49 @@ where
         iter::repeat_with(|| self.dequeue())
             .map_while(|res| res.ok())
             .flatten()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::{ops::Deref, sync::Arc, time::Duration};
+
+    use crate::{
+        buffer::VecBuffer,
+        error::{EnqueueError, TryEnqueueError},
+        SyncSBQueue,
+    };
+
+    #[test]
+    fn plop() {
+        let queue: Arc<SyncSBQueue<VecBuffer<usize>>> = Arc::new(SyncSBQueue::with_capacity(1));
+        queue.try_enqueue(0).unwrap();
+        assert_eq!(
+            queue.try_enqueue(1),
+            Err(TryEnqueueError::InsufficientCapacity(1))
+        );
+        // queue is full, let's spawn an enqueuing task and dequeue
+        let queue_clone = queue.clone();
+        let task = std::thread::spawn(move || queue_clone.enqueue(1));
+        let queue_clone = queue.clone();
+        let task2 = std::thread::spawn(move || queue_clone.enqueue(1));
+        std::thread::sleep(Duration::from_millis(1));
+        println!("1");
+        assert_eq!(queue.dequeue().unwrap().deref(), &[0]);
+        // enqueuing task has succeeded
+        // task.join().unwrap().unwrap();
+        println!("2");
+        assert_eq!(queue.dequeue().unwrap().deref(), &[1]);
+        task.join().unwrap().unwrap();
+        task2.join().unwrap().unwrap();
+        println!("3");
+        assert_eq!(queue.dequeue().unwrap().deref(), &[1]);
+        // let's close the queue
+        queue.try_enqueue(2).unwrap();
+        let queue_clone = queue.clone();
+        let task = std::thread::spawn(move || queue_clone.enqueue(3));
+        std::thread::sleep(Duration::from_millis(1));
+        queue.close();
+        assert_eq!(task.join().unwrap(), Err(EnqueueError::Closed(3)));
     }
 }
