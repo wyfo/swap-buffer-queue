@@ -30,14 +30,3 @@ rustdoc-args = [
     "--cfg",
     "docsrs",
 ]
-
-[[bench]]
-name = "sync"
-harness = false
-
-[[bench]]
-name = "async"
-harness = false
-
-[workspace]
-members = ["benchmarks"]

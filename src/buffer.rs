@@ -44,8 +44,6 @@ pub unsafe trait Buffer: Default {
         Self: 'a;
     /// Returns the buffer's capacity.
     fn capacity(&self) -> usize;
-    /// Formats the buffer fields in debugging context.
-    fn debug(&self, debug_struct: &mut fmt::DebugStruct);
     /// Returns a slice of the buffer.
     ///
     /// # Safety
@@ -75,7 +73,7 @@ pub unsafe trait BufferValue<B: Buffer> {
     /// # Safety
     /// For every call to this method, the inserted range `index..index+value.size()` **must not**
     /// overlap with a previously inserted one.
-    unsafe fn insert_into(self, buffer: &UnsafeCell<B>, index: usize);
+    unsafe fn insert_into(self, buffer: &B, index: usize);
 }
 
 /// Resizable [`Buffer`].
@@ -125,12 +123,7 @@ where
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.len.load(Ordering::Relaxed)
-    }
-
-    pub(crate) fn debug(&self, debug_struct: &mut fmt::DebugStruct) {
-        debug_struct.field("len", &self.len());
-        unsafe { &*self.buffer.get() }.debug(debug_struct);
+        self.len.load(Ordering::Acquire)
     }
 
     pub(crate) unsafe fn insert<T>(&self, index: usize, value: T) -> bool
@@ -138,8 +131,8 @@ where
         T: BufferValue<B>,
     {
         let size = value.size();
-        value.insert_into(&self.buffer, index);
-        let prev_len = self.len.fetch_add(size, Ordering::Relaxed);
+        value.insert_into(&*self.buffer.get(), index);
+        let prev_len = self.len.fetch_add(size, Ordering::AcqRel);
         prev_len >= index
     }
 
@@ -153,7 +146,7 @@ where
         #[cfg(debug_assertions)]
         debug_assert_eq!(range, self.removed.load(Ordering::Relaxed)..self.len());
         (*self.buffer.get()).clear(range);
-        self.len.store(0, Ordering::Relaxed);
+        self.len.store(0, Ordering::Release);
         #[cfg(debug_assertions)]
         self.removed.store(0, Ordering::Relaxed);
     }

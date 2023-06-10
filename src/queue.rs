@@ -22,6 +22,7 @@ where
     buffer_remain: CachePadded<AtomicUsize>,
     pending_dequeue: CachePadded<AtomicUsize>,
     buffers: [BufferWithLen<B>; 2],
+    capacity: AtomicUsize,
     notify: N,
 }
 
@@ -47,6 +48,7 @@ where
             buffer_remain: AtomicUsize::new(capacity << 1).into(),
             pending_dequeue: AtomicUsize::new(0).into(),
             buffers,
+            capacity: AtomicUsize::new(capacity),
             notify: Default::default(),
         }
     }
@@ -73,6 +75,7 @@ where
                 BufferWithLen::with_capacity(capacity),
                 BufferWithLen::with_capacity(capacity),
             ],
+            capacity: AtomicUsize::new(capacity),
             notify: Default::default(),
         }
     }
@@ -97,10 +100,6 @@ where
         &self.notify
     }
 
-    fn current_buffer(&self) -> &BufferWithLen<B> {
-        &self.buffers[self.buffer_remain.load(Ordering::Relaxed) & 1]
-    }
-
     /// Returns the current buffer capacity.
     ///
     /// # Examples
@@ -111,7 +110,8 @@ where
     /// assert_eq!(queue.capacity(), 42);
     /// ```
     pub fn capacity(&self) -> usize {
-        self.current_buffer().capacity()
+        // cannot use `Buffer::capacity` because of data race
+        self.capacity.load(Ordering::Relaxed)
     }
 
     /// Returns the current buffer length.
@@ -126,7 +126,7 @@ where
     /// assert_eq!(queue.len(), 1);
     /// ```
     pub fn len(&self) -> usize {
-        self.current_buffer().len()
+        self.buffers[self.buffer_remain.load(Ordering::Relaxed) & 1].len()
     }
 
     /// Returns `true` if the current buffer is empty.
@@ -314,6 +314,10 @@ where
             Ordering::Relaxed,
         ) {
             buffer_remain = s;
+        }
+        if self.capacity() != next_buffer.capacity() {
+            self.capacity
+                .store(next_buffer.capacity(), Ordering::Relaxed);
         }
         self.notify.notify_enqueue();
         let len = capacity - ((buffer_remain & !CLOSED_FLAG) >> 1);
@@ -568,10 +572,11 @@ where
     N: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut debug_struct = f.debug_struct("SBQueue");
-        self.buffers[self.buffer_remain.load(Ordering::Relaxed) & 1].debug(&mut debug_struct);
-        debug_struct.field("notify", &self.notify);
-        debug_struct.finish()
+        f.debug_struct("SBQueue")
+            .field("capacity", &self.capacity())
+            .field("len", &self.len())
+            .field("notify", &self.notify)
+            .finish()
     }
 }
 

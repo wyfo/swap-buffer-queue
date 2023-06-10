@@ -5,14 +5,11 @@ use std::{
     slice,
 };
 
-fn init_array<T, const N: usize>(default: T) -> [T; N]
-where
-    T: Copy,
-{
+pub(crate) fn init_array<T, const N: usize>(default: impl Fn() -> T) -> [T; N] {
     // SAFETY: common MaybeUninit pattern, used in unstable `MaybeUninit::uninit_array`
     let mut array: [MaybeUninit<T>; N] = unsafe { MaybeUninit::uninit().assume_init() };
     for elem in &mut array {
-        elem.write(default);
+        elem.write(default());
     }
     // SAFETY: all elements have been initialized
     // I used `std::mem::transmute_copy` because `transmute` doesn't work here
@@ -59,14 +56,22 @@ impl<T, const HEADER_SIZE: usize, const N: usize, const TRAILER_SIZE: usize> Der
 
 impl<T, const HEADER_SIZE: usize, const N: usize, const TRAILER_SIZE: usize>
     ArrayWithHeaderAndTrailer<T, HEADER_SIZE, N, TRAILER_SIZE>
-where
-    T: Copy,
 {
-    pub(crate) fn new(default: T) -> Self {
+    pub(crate) fn new(default: impl Fn() -> T) -> Self {
         Self {
-            header: init_array(default),
-            array: init_array(default),
-            trailer: init_array(default),
+            header: init_array(&default),
+            array: init_array(&default),
+            trailer: init_array(&default),
         }
+    }
+}
+
+impl<T, const HEADER_SIZE: usize, const N: usize, const TRAILER_SIZE: usize> Default
+    for ArrayWithHeaderAndTrailer<T, HEADER_SIZE, N, TRAILER_SIZE>
+where
+    T: Default + Clone,
+{
+    fn default() -> Self {
+        Self::new(T::default)
     }
 }

@@ -63,3 +63,45 @@ pub type AsyncSBQueue<B, const EAGER: bool = false> = SBQueue<B, r#async::AsyncN
 #[cfg(feature = "sync")]
 /// A synchronous implementation of [`SBQueue`].
 pub type SyncSBQueue<B, const EAGER: bool = false> = SBQueue<B, sync::SyncNotifier<EAGER>>;
+
+// #[cfg(test)]
+// mod test {
+//     use std::{
+//         cell::{Cell, UnsafeCell},
+//         mem, slice,
+//         sync::Arc,
+//         thread,
+//         time::Duration,
+//     };
+//
+//     struct Buffer(Box<[Cell<u8>]>);
+//     unsafe impl Send for Buffer {}
+//     unsafe impl Sync for Buffer {}
+//
+//     #[test]
+//     fn plop() {
+//         let buffer = Arc::new(Buffer(vec![Cell::new(0); 4].into_boxed_slice()));
+//         let buffer_clone = buffer.clone();
+//         // thread::spawn(move || loop {
+//         //     let _ = buffer.0.as_slice_of_cells().len();
+//         // });
+//         thread::spawn(move || loop {
+//             unsafe {
+//                 (*UnsafeCell::raw_get(
+//                     &buffer.0[0..2] as *const [Cell<u8>] as *const UnsafeCell<[u8]>,
+//                 ))
+//                 .copy_from_slice(&[0, 0]);
+//             }
+//         });
+//         thread::spawn(move || loop {
+//             unsafe {
+//                 (*UnsafeCell::raw_get(
+//                     &buffer_clone.0[2..4] as *const [Cell<u8>] as *const UnsafeCell<[u8]>,
+//                 ))
+//                 .copy_from_slice(&[0, 0]);
+//             }
+//         });
+//         thread::sleep(Duration::from_secs(1));
+//         println!("done");
+//     }
+// }
