@@ -2,10 +2,10 @@
 
 use std::fmt;
 
-/// Error returned by [`SBQueue::try_enqueue`](crate::SBQueue::try_enqueue).
+/// Error returned by [`Queue::try_enqueue`](crate::Queue::try_enqueue).
 ///
 /// The value whose enqueuing has failed is embedded within the error.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum TryEnqueueError<T> {
     /// The queue doesn't have sufficient capacity to enqueue the give value.
     InsufficientCapacity(T),
@@ -15,18 +15,39 @@ pub enum TryEnqueueError<T> {
 
 impl<T> TryEnqueueError<T> {
     /// Returns the value whose enqueuing has failed
-    pub fn inner(self) -> T {
+    pub fn into_inner(self) -> T {
         match self {
             Self::InsufficientCapacity(v) | Self::Closed(v) => v,
         }
     }
 }
 
-/// Error returned by [`AsyncSBQueue::enqueue`](crate::AsyncSBQueue::enqueue)/
-/// [`SyncSBQueue::enqueue`](crate::SyncSBQueue::enqueue).
+impl<T> fmt::Debug for TryEnqueueError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InsufficientCapacity(_) => write!(f, "TryEnqueueError::InsufficientCapacity(_)"),
+            Self::Closed(_) => write!(f, "TryEnqueueError::Closed(_)"),
+        }
+    }
+}
+
+impl<T> fmt::Display for TryEnqueueError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let error = match self {
+            Self::InsufficientCapacity(_) => "queue has insufficient capacity",
+            Self::Closed(_) => "queue is closed",
+        };
+        write!(f, "{error}")
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T> std::error::Error for TryEnqueueError<T> {}
+
+/// Error returned by [`SynchronizedQueue::enqueue`](crate::SynchronizedQueue::enqueue)/[`SynchronizedQueue::enqueue_async`](crate::SynchronizedQueue::enqueue_async)
 pub type EnqueueError<T> = TryEnqueueError<T>;
 
-/// Error returned by [`SBQueue::try_dequeue`](crate::SBQueue::try_dequeue).
+/// Error returned by [`Queue::try_dequeue`](crate::Queue::try_dequeue).
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum TryDequeueError {
     /// The queue is empty.
@@ -36,9 +57,6 @@ pub enum TryDequeueError {
     /// The queue is closed.
     Closed,
     /// The queue is concurrently dequeued.
-    ///
-    /// - A previous [`BufferSlice`](crate::buffer::BufferSlice`) may not have been dropped;
-    /// - The queue is dequeued in another thread.
     Conflict,
 }
 
@@ -57,16 +75,13 @@ impl fmt::Display for TryDequeueError {
 #[cfg(feature = "std")]
 impl std::error::Error for TryDequeueError {}
 
-/// Error returned by [`AsyncSBQueue::dequeue`](crate::AsyncSBQueue::dequeue)/
-/// [`SyncSBQueue::dequeue`](crate::SyncSBQueue::dequeue).
+/// Error returned by [`SynchronizedQueue::dequeue`](crate::SynchronizedQueue::dequeue)/
+/// [`SynchronizedQueue::dequeue_async`](crate::SynchronizedQueue::dequeue_async).
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum DequeueError {
     /// The queue is closed.
     Closed,
     /// The queue is concurrently dequeued.
-    ///
-    /// - A previous [`BufferSlice`](crate::buffer::BufferSlice`) may not have been dropped;
-    /// - The queue is dequeued in another thread.
     Conflict,
 }
 

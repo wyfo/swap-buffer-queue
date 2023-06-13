@@ -9,8 +9,7 @@
 //! This library is intended to be a (better, I hope) alternative to traditional MPSC queues
 //! in the context of a buffering consumer, by moving the buffering part directly into the queue.
 //!
-//! It is especially well suited for IO writing workflow, see [`write`](crate::write) and
-//! [`write_vectored`].
+//! It is especially well suited for IO writing workflow, see [`mod@write`] and [`write_vectored`].
 //!
 //! The crate is *no_std* (some buffer implementations may require `std`).
 //!
@@ -18,9 +17,9 @@
 //!
 //! ```rust
 //! # use std::ops::Deref;
-//! # use swap_buffer_queue::{buffer::VecBuffer, SBQueue};
+//! # use swap_buffer_queue::{buffer::VecBuffer, Queue};
 //! // Initialize the queue with a capacity
-//! let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+//! let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
 //! // Enqueue some values
 //! queue.try_enqueue(0).unwrap();
 //! queue.try_enqueue(1).unwrap();
@@ -31,77 +30,31 @@
 //! assert_eq!(slice.into_iter().collect::<Vec<_>>(), vec![0, 1]);
 //! ```
 
+extern crate alloc;
 #[cfg(not(feature = "std"))]
 extern crate core as std;
 
-// Define this module before async and sync ones, in order to order the documentation
-mod queue;
-
-#[cfg(feature = "async")]
-#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
-pub mod r#async;
 pub mod buffer;
 pub mod error;
 mod loom;
 pub mod notify;
-#[cfg(feature = "sync")]
-#[cfg_attr(docsrs, doc(cfg(feature = "sync")))]
-pub mod sync;
-#[cfg(any(feature = "write", feature = "write-vectored"))]
+mod queue;
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+mod synchronized;
 mod utils;
 #[cfg(feature = "write")]
 #[cfg_attr(docsrs, doc(cfg(feature = "write")))]
 pub mod write;
-#[cfg(feature = "write-vectored")]
-#[cfg_attr(docsrs, doc(cfg(feature = "write-vectored")))]
+#[cfg(feature = "write")]
+#[cfg_attr(docsrs, doc(cfg(feature = "write")))]
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod write_vectored;
 
-pub use queue::SBQueue;
-#[cfg(feature = "async")]
-/// An asynchronous implementation of [`SBQueue`].
-pub type AsyncSBQueue<B, const EAGER: bool = false> = SBQueue<B, r#async::AsyncNotifier<EAGER>>;
-#[cfg(feature = "sync")]
-/// A synchronous implementation of [`SBQueue`].
-pub type SyncSBQueue<B, const EAGER: bool = false> = SBQueue<B, sync::SyncNotifier<EAGER>>;
-
-// #[cfg(test)]
-// mod test {
-//     use std::{
-//         cell::{Cell, UnsafeCell},
-//         mem, slice,
-//         sync::Arc,
-//         thread,
-//         time::Duration,
-//     };
-//
-//     struct Buffer(Box<[Cell<u8>]>);
-//     unsafe impl Send for Buffer {}
-//     unsafe impl Sync for Buffer {}
-//
-//     #[test]
-//     fn plop() {
-//         let buffer = Arc::new(Buffer(vec![Cell::new(0); 4].into_boxed_slice()));
-//         let buffer_clone = buffer.clone();
-//         // thread::spawn(move || loop {
-//         //     let _ = buffer.0.as_slice_of_cells().len();
-//         // });
-//         thread::spawn(move || loop {
-//             unsafe {
-//                 (*UnsafeCell::raw_get(
-//                     &buffer.0[0..2] as *const [Cell<u8>] as *const UnsafeCell<[u8]>,
-//                 ))
-//                 .copy_from_slice(&[0, 0]);
-//             }
-//         });
-//         thread::spawn(move || loop {
-//             unsafe {
-//                 (*UnsafeCell::raw_get(
-//                     &buffer_clone.0[2..4] as *const [Cell<u8>] as *const UnsafeCell<[u8]>,
-//                 ))
-//                 .copy_from_slice(&[0, 0]);
-//             }
-//         });
-//         thread::sleep(Duration::from_secs(1));
-//         println!("done");
-//     }
-// }
+pub use queue::Queue;
+#[cfg(feature = "std")]
+pub use synchronized::SynchronizedNotifier;
+#[cfg(feature = "std")]
+/// [`Queue`] with [`SynchronizedNotifier`]
+pub type SynchronizedQueue<B> = Queue<B, synchronized::SynchronizedNotifier>;

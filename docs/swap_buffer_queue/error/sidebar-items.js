@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":[["DequeueError","Error returned by `SBQueue::dequeue`."],["TryDequeueError","Error returned by `SBQueue::try_dequeue`."],["TryEnqueueError","Error returned by `SBQueue::try_enqueue`."]],"struct":[["EnqueueError","Error returned by `SBQueue::enqueue`."]]};

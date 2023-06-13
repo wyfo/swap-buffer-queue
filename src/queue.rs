@@ -15,7 +15,7 @@ use crate::{
 const CLOSED_FLAG: usize = (usize::MAX >> 1) + 1;
 
 /// A buffered MPSC "swap-buffer" queue.
-pub struct SBQueue<B, N = ()>
+pub struct Queue<B, N = ()>
 where
     B: Buffer,
 {
@@ -26,7 +26,7 @@ where
     notify: N,
 }
 
-impl<B, N> SBQueue<B, N>
+impl<B, N> Queue<B, N>
 where
     B: Buffer,
     N: Default,
@@ -37,9 +37,9 @@ where
     ///
     /// # Examples
     /// ```
-    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
-    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::new();
+    /// let queue: Queue<VecBuffer<usize>> = Queue::new();
     /// ```
     pub fn new() -> Self {
         let buffers: [BufferWithLen<B>; 2] = Default::default();
@@ -54,7 +54,7 @@ where
     }
 }
 
-impl<B, N> SBQueue<B, N>
+impl<B, N> Queue<B, N>
 where
     B: Buffer + Resize,
     N: Default,
@@ -63,9 +63,9 @@ where
     ///
     /// # Examples
     /// ```
-    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
-    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+    /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// ```
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -81,7 +81,7 @@ where
     }
 }
 
-impl<B, N> SBQueue<B, N>
+impl<B, N> Queue<B, N>
 where
     B: Buffer,
 {
@@ -89,12 +89,12 @@ where
     ///
     /// # Examples
     /// ```
-    /// # use swap_buffer_queue::AsyncSBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// use swap_buffer_queue::notify::Notify;
     ///
-    /// let queue: AsyncSBQueue<VecBuffer<usize>> = AsyncSBQueue::with_capacity(42);
-    /// queue.notify().notify_dequeue(true);
+    /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
+    /// queue.notify().notify_dequeue();
     /// ```
     pub fn notify(&self) -> &N {
         &self.notify
@@ -104,9 +104,9 @@ where
     ///
     /// # Examples
     /// ```
-    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
-    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+    /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// assert_eq!(queue.capacity(), 42);
     /// ```
     pub fn capacity(&self) -> usize {
@@ -118,9 +118,9 @@ where
     ///
     /// # Examples
     /// ```
-    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
-    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+    /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// assert_eq!(queue.len(), 0);
     /// queue.try_enqueue(0).unwrap();
     /// assert_eq!(queue.len(), 1);
@@ -133,9 +133,9 @@ where
     ///
     /// # Examples
     /// ```
-    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
-    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+    /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// assert!(queue.is_empty());
     /// ```
     pub fn is_empty(&self) -> bool {
@@ -146,9 +146,9 @@ where
     ///
     /// # Examples
     /// ```
-    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
-    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+    /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// assert!(!queue.is_closed());
     /// queue.close();
     /// assert!(queue.is_closed());
@@ -163,9 +163,9 @@ where
     ///
     /// # Examples
     /// ```
-    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
-    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+    /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// queue.close();
     /// assert!(queue.is_closed());
     /// queue.reopen();
@@ -214,7 +214,7 @@ where
     }
 }
 
-impl<B, N> SBQueue<B, N>
+impl<B, N> Queue<B, N>
 where
     B: Buffer,
     N: Notify,
@@ -226,10 +226,10 @@ where
     ///
     /// # Examples
     /// ```
-    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::TryEnqueueError;
-    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(1);
+    /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(1);
     /// queue.try_enqueue(0).unwrap();
     /// // queue is full
     /// assert_eq!(
@@ -246,12 +246,17 @@ where
     {
         let shifted_size = value.size() << 1;
         let mut buffer_remain = self.buffer_remain.load(Ordering::Acquire);
+        let backoff = Backoff::new();
+        let mut spin = false;
         loop {
             if buffer_remain & CLOSED_FLAG != 0 {
                 return Err(TryEnqueueError::Closed(value));
             }
             if buffer_remain < shifted_size {
                 return Err(TryEnqueueError::InsufficientCapacity(value));
+            }
+            if spin {
+                backoff.spin();
             }
             match self.buffer_remain.compare_exchange_weak(
                 buffer_remain,
@@ -260,13 +265,16 @@ where
                 Ordering::Relaxed,
             ) {
                 Ok(_) => break,
-                Err(s) => buffer_remain = s,
+                Err(remain) => {
+                    spin = remain & 1 == buffer_remain & 1;
+                    buffer_remain = remain;
+                }
             }
         }
         let buffer = &self.buffers[buffer_remain & 1];
         let index = buffer.capacity() - (buffer_remain >> 1);
-        let may_be_ready = unsafe { buffer.insert(index, value) };
-        self.notify.notify_dequeue(may_be_ready);
+        unsafe { buffer.insert(index, value) };
+        self.notify.notify_dequeue();
         Ok(())
     }
 
@@ -285,28 +293,36 @@ where
                 .try_dequeue_spin(buffer_index, pending_dequeue >> 1)
                 .ok_or(TryDequeueError::Pending);
         }
+        let next_buffer_index = buffer_index ^ 1;
+        let next_buffer = &self.buffers[next_buffer_index];
+        let mut next_capa = next_buffer.capacity();
+        let mut capa_updated = false;
+        let mut update_capa = |capa| {
+            if capa != next_capa {
+                next_capa = capa;
+                capa_updated = true;
+            }
+        };
+        if let Some(resize) = resize {
+            update_capa(resize(next_buffer));
+        }
+        if let Some(insert) = insert {
+            update_capa(insert(next_buffer));
+        }
+        let next_buffer_remain = next_buffer_index | (next_capa << 1);
         let mut buffer_remain = self.buffer_remain.load(Ordering::Acquire);
         assert_eq!(buffer_index, buffer_remain & 1);
         let capacity = self.buffers[buffer_index].capacity();
-        let swap_if_empty = resize.is_some() || insert.is_some();
-        if ((buffer_remain & !CLOSED_FLAG) >> 1) == capacity {
-            if buffer_remain & CLOSED_FLAG != 0 {
-                self.pending_dequeue
-                    .store(pending_dequeue, Ordering::Relaxed);
-                return Err(TryDequeueError::Closed);
-            } else if !swap_if_empty {
-                self.pending_dequeue
-                    .store(pending_dequeue, Ordering::Relaxed);
-                return Err(TryDequeueError::Empty);
-            }
+        if ((buffer_remain & !CLOSED_FLAG) >> 1) == capacity && !capa_updated {
+            self.pending_dequeue
+                .store(pending_dequeue, Ordering::Relaxed);
+            return Err(if buffer_remain & CLOSED_FLAG != 0 {
+                TryDequeueError::Closed
+            } else {
+                TryDequeueError::Empty
+            });
         }
-        let next_buffer_index = !buffer_remain & 1;
-        let next_buffer = &self.buffers[next_buffer_index];
-        let mut next_capa = resize.map_or_else(|| next_buffer.capacity(), |r| r(next_buffer));
-        if let Some(insert) = insert {
-            next_capa = insert(next_buffer);
-        }
-        let next_buffer_remain = next_buffer_index | (next_capa << 1);
+        let backoff = Backoff::new();
         while let Err(s) = self.buffer_remain.compare_exchange_weak(
             buffer_remain,
             next_buffer_remain | (buffer_remain & CLOSED_FLAG),
@@ -314,6 +330,9 @@ where
             Ordering::Relaxed,
         ) {
             buffer_remain = s;
+            if buffer_remain >> 1 != 0 {
+                backoff.spin();
+            }
         }
         if self.capacity() != next_buffer.capacity() {
             self.capacity
@@ -321,7 +340,7 @@ where
         }
         self.notify.notify_enqueue();
         let len = capacity - ((buffer_remain & !CLOSED_FLAG) >> 1);
-        if swap_if_empty && len == 0 {
+        if capa_updated && len == 0 {
             self.pending_dequeue
                 .store(!buffer_index & 1, Ordering::Relaxed);
             return Err(TryDequeueError::Empty);
@@ -348,10 +367,10 @@ where
     /// # Examples
     /// ```
     /// # use std::ops::Deref;
-    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::TryDequeueError;
-    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+    /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// queue.try_enqueue(0).unwrap();
     /// queue.try_enqueue(1).unwrap();
     /// let slice = queue.try_dequeue().unwrap();
@@ -379,14 +398,14 @@ where
     ///
     /// Closed queue can no more accept enqueuing, but it can be dequeued while not empty.
     /// Calling this method on a closed queue has no effect.
-    /// See [`reopen`](SBQueue::reopen) to reopen a closed queue.
+    /// See [`reopen`](Queue::reopen) to reopen a closed queue.
     /// # Examples
     /// ```
     /// # use std::ops::Deref;
-    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::{TryDequeueError, TryEnqueueError};
-    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+    /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// queue.try_enqueue(0).unwrap();
     /// queue.close();
     /// assert!(queue.is_closed());
@@ -396,12 +415,12 @@ where
     /// ```
     pub fn close(&self) {
         self.buffer_remain.fetch_or(CLOSED_FLAG, Ordering::AcqRel);
-        self.notify.notify_dequeue(true);
+        self.notify.notify_dequeue();
         self.notify.notify_enqueue();
     }
 }
 
-impl<B, N> SBQueue<B, N>
+impl<B, N> Queue<B, N>
 where
     B: Buffer + Resize,
     N: Notify,
@@ -409,20 +428,20 @@ where
     /// Tries dequeuing a buffer with all enqueued values from the queue, and resizes the next
     /// buffer to be used for enqueuing.
     ///
-    /// This method is an extension of [`try_dequeue`](SBQueue::try_dequeue) method. In fact,
+    /// This method is an extension of [`try_dequeue`](Queue::try_dequeue) method. In fact,
     /// before swapping the buffers, next one is empty and protected, so it can be resized, and
     /// it is also possible to add values in it before making it available for enqueuing.
-    /// This can be used to make the queue [unbounded](SBQueue#an-amortized-unbounded-recipe).
+    /// This can be used to make the queue [unbounded](Queue#an-amortized-unbounded-recipe).
     ///
     /// It is worth to be noted that only one buffer is resized, so it can lead to asymmetric buffers.
     ///
     /// # Examples
     /// ```
     /// # use std::ops::Deref;
-    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::TryEnqueueError;
-    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(1);
+    /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(1);
     /// queue.try_enqueue(0).unwrap();
     /// // queue is full
     /// assert_eq!(
@@ -447,12 +466,12 @@ where
     /// ```rust
     /// # use std::ops::Deref;
     /// # use std::sync::Mutex;
-    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::{BufferSlice, BufferValue, VecBuffer};
     /// # use swap_buffer_queue::error::{EnqueueError, TryDequeueError, TryEnqueueError};
     /// # use swap_buffer_queue::notify::Notify;
     /// fn enqueue_unbounded<T: BufferValue<VecBuffer<T>>>(
-    ///     queue: &SBQueue<VecBuffer<T>>,
+    ///     queue: &Queue<VecBuffer<T>>,
     ///     overflow: &Mutex<Vec<T>>,
     ///     mut value: T,
     /// ) -> Result<(), EnqueueError<T>> {
@@ -471,12 +490,12 @@ where
     ///     // then push the values to the overflow vector
     ///     guard.push(value);
     ///     // notify possible waiting dequeue
-    ///     queue.notify().notify_dequeue(true);
+    ///     queue.notify().notify_dequeue();
     ///     Ok(())
     /// }
     ///
     /// fn try_dequeue_unbounded<'a, T>(
-    ///     queue: &'a SBQueue<VecBuffer<T>>,
+    ///     queue: &'a Queue<VecBuffer<T>>,
     ///     overflow: &Mutex<Vec<T>>,
     /// ) -> Result<BufferSlice<'a, VecBuffer<T>, ()>, TryDequeueError> {
     ///     // lock the overflow and use `try_dequeue_and_resize` to drain the overflow into the
@@ -486,7 +505,7 @@ where
     /// }
     ///
     /// // queue is initialized with zero capacity
-    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::new();
+    /// let queue: Queue<VecBuffer<usize>> = Queue::new();
     /// let overflow = Mutex::new(Vec::new());
     /// assert_eq!(queue.capacity(), 0);
     /// enqueue_unbounded(&queue, &overflow, 0).unwrap();
@@ -547,7 +566,7 @@ where
     }
 }
 
-impl<B, N> SBQueue<B, N>
+impl<B, N> Queue<B, N>
 where
     B: Buffer + Drain,
 {
@@ -556,7 +575,7 @@ where
     }
 }
 
-impl<B, N> Default for SBQueue<B, N>
+impl<B, N> Default for Queue<B, N>
 where
     B: Buffer,
     N: Default,
@@ -566,13 +585,13 @@ where
     }
 }
 
-impl<B, N> fmt::Debug for SBQueue<B, N>
+impl<B, N> fmt::Debug for Queue<B, N>
 where
     B: Buffer,
     N: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SBQueue")
+        f.debug_struct("Queue")
             .field("capacity", &self.capacity())
             .field("len", &self.len())
             .field("notify", &self.notify)
@@ -580,7 +599,7 @@ where
     }
 }
 
-impl<B, N> Drop for SBQueue<B, N>
+impl<B, N> Drop for Queue<B, N>
 where
     B: Buffer,
 {

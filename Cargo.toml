@@ -4,12 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-buffer = []
-async = ["std", "dep:futures"]
+default = ["futures"]
+futures = ["std", "dep:futures"]
 std = ["crossbeam-utils/std"]
-sync = ["std"]
 write = []
-write-vectored = ["std"]
 
 [dependencies]
 crossbeam-utils = { version = "0.8", default-features = false }
@@ -21,7 +19,6 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "
 
 [target.'cfg(loom)'.dev-dependencies]
 loom = "0.5"
-
 
 # See tokio Cargo.toml
 [package.metadata.docs.rs]

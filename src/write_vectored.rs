@@ -8,9 +8,9 @@
 //! ```rust
 //! # use std::io::{IoSlice, Write};
 //! # use swap_buffer_queue::{write_vectored::WriteVectoredVecBuffer};
-//! # use swap_buffer_queue::SBQueue;
+//! # use swap_buffer_queue::Queue;
 //! // Creates a WriteVectoredVecBuffer queue
-//! let queue: SBQueue<WriteVectoredVecBuffer<Vec<u8>>> = SBQueue::with_capacity(100);
+//! let queue: Queue<WriteVectoredVecBuffer<Vec<u8>>> = Queue::with_capacity(100);
 //! queue.try_enqueue(vec![0; 256]).unwrap();
 //! queue.try_enqueue(vec![42; 42]).unwrap();
 //! let mut slice = queue.try_dequeue().unwrap();
@@ -49,9 +49,9 @@ pub(crate) static EMPTY_SLICE: &[u8] = &[];
 /// # use std::io::IoSlice;
 /// # use std::ops::Deref;
 /// # use swap_buffer_queue::buffer::BufferSlice;
-/// # use swap_buffer_queue::SBQueue;
+/// # use swap_buffer_queue::Queue;
 /// # use swap_buffer_queue::write_vectored::{VectoredSlice, WriteVectoredVecBuffer};
-/// # let queue: SBQueue<WriteVectoredVecBuffer<_>> = SBQueue::with_capacity(42);
+/// # let queue: Queue<WriteVectoredVecBuffer<_>> = Queue::with_capacity(42);
 /// # queue.try_enqueue(vec![2, 3, 4, 5]).unwrap();
 /// let mut slice: BufferSlice<WriteVectoredVecBuffer<Vec<u8>>, _> /* = ... */;
 /// # slice = queue.try_dequeue().unwrap();

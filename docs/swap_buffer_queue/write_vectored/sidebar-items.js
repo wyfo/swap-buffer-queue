@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":[["VectoredFrame","A framed part of a [`VectoredSlice`], with an [`IoSlice`] header and an [`IoSlice`] trailer (see [`VectoredSlice::frame`])."],["VectoredSlice","A vectored slice, i.e. a slice of [`IoSlice`]."],["WriteVectoredArrayBuffer","A buffer of [`IoSlice`] of size `N`"],["WriteVectoredVecBuffer","A buffer of [`IoSlice`]"]]};

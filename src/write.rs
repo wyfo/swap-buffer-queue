@@ -8,10 +8,10 @@
 //! # Examples
 //! ```rust
 //! # use std::io::Write;
-//! # use swap_buffer_queue::SBQueue;
+//! # use swap_buffer_queue::Queue;
 //! # use swap_buffer_queue::write::{WriteBytesSlice, WriteVecBuffer};
 //! // Creates a WriteVecBuffer queue with a 2-bytes header
-//! let queue: SBQueue<WriteVecBuffer<2>> = SBQueue::with_capacity((1 << 16) - 1);
+//! let queue: Queue<WriteVecBuffer<2>> = Queue::with_capacity((1 << 16) - 1);
 //! queue
 //!     .try_enqueue((256, |slice: &mut [u8]| { /* write the slice */ }))
 //!     .ok()
@@ -51,9 +51,9 @@ pub use vec::WriteVecBuffer;
 /// ```rust
 /// # use std::ops::Deref;
 /// # use swap_buffer_queue::buffer::BufferSlice;
-/// # use swap_buffer_queue::SBQueue;
+/// # use swap_buffer_queue::Queue;
 /// # use swap_buffer_queue::write::{BytesSlice, WriteBytesSlice, WriteVecBuffer};
-/// # let queue: SBQueue<WriteVecBuffer<2, 4>> = SBQueue::with_capacity(42);
+/// # let queue: Queue<WriteVecBuffer<2, 4>> = Queue::with_capacity(42);
 /// # queue.try_enqueue(&[2u8, 3, 4, 5] as &[_]).ok().unwrap();
 /// let mut slice: BufferSlice<WriteVecBuffer<2, 4>, _> /* = ... */;
 /// # slice = queue.try_dequeue().unwrap();

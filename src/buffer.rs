@@ -1,6 +1,8 @@
 //! [`Buffer`] definition and simple implementations.
 
+use core::marker::PhantomData;
 use std::{
+    borrow::Borrow,
     cell::UnsafeCell,
     fmt,
     iter::FusedIterator,
@@ -8,31 +10,26 @@ use std::{
     mem::ManuallyDrop,
     ops::{Deref, DerefMut, Range},
     panic::{RefUnwindSafe, UnwindSafe},
+    ptr,
 };
 
 use crossbeam_utils::CachePadded;
 
 use crate::{
     loom::atomic::{AtomicUsize, Ordering},
-    queue::SBQueue,
+    queue::Queue,
 };
 
-#[cfg(feature = "buffer")]
-#[cfg_attr(docsrs, doc(cfg(feature = "buffer")))]
 mod array;
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-#[cfg(feature = "buffer")]
-#[cfg_attr(docsrs, doc(cfg(feature = "buffer")))]
 mod vec;
 
-#[cfg(feature = "buffer")]
 pub use array::ArrayBuffer;
 #[cfg(feature = "std")]
-#[cfg(feature = "buffer")]
 pub use vec::VecBuffer;
 
-/// [`SBQueue`] buffer. It is used together with [`BufferValue`].
+/// [`Queue`] buffer. It is used together with [`BufferValue`].
 ///
 /// # Safety
 /// [`Buffer::clear`] *clears* the inserted range (see [`BufferValue::insert_into`]),
@@ -85,7 +82,7 @@ pub trait Resize: Buffer {
 /// [`Buffer`] whose values can be drained from.
 ///
 /// # Safety
-/// Calling [`Buffer::remove`] decreased the inserted range (see [`BufferValue::insert_into`])
+/// Calling [`Drain::remove`] decreased the inserted range (see [`BufferValue::insert_into`])
 /// by the size of the removed value.
 pub unsafe trait Drain: Buffer {
     /// Value to be removed from the buffer
@@ -126,14 +123,13 @@ where
         self.len.load(Ordering::Acquire)
     }
 
-    pub(crate) unsafe fn insert<T>(&self, index: usize, value: T) -> bool
+    pub(crate) unsafe fn insert<T>(&self, index: usize, value: T)
     where
         T: BufferValue<B>,
     {
         let size = value.size();
         value.insert_into(&*self.buffer.get(), index);
-        let prev_len = self.len.fetch_add(size, Ordering::AcqRel);
-        prev_len >= index
+        self.len.fetch_add(size, Ordering::AcqRel);
     }
 
     pub(crate) unsafe fn slice(&self, range: Range<usize>) -> B::Slice<'_> {
@@ -185,17 +181,17 @@ where
     }
 }
 
-/// [`Buffer`] slice returned by [`SBQueue::try_dequeue`] (see [`Buffer::Slice`]).
+/// [`Buffer`] slice returned by [`Queue::try_dequeue`] (see [`Buffer::Slice`]).
 ///
 /// Buffer is released when the slice is dropped, so the other buffer will be dequeued next,
-/// unless [`BufferSlice::Requeue`]/[`BufferSlice::into_iter`] is called.
+/// unless [`BufferSlice::requeue`]/[`BufferSlice::into_iter`] is called.
 ///
 /// # Examples
 /// ```
 /// # use std::ops::Deref;
-/// # use swap_buffer_queue::SBQueue;
+/// # use swap_buffer_queue::Queue;
 /// # use swap_buffer_queue::buffer::VecBuffer;
-/// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+/// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
 /// queue.try_enqueue(0).unwrap();
 /// queue.try_enqueue(1).unwrap();
 ///
@@ -207,7 +203,7 @@ pub struct BufferSlice<'a, B, N>
 where
     B: Buffer,
 {
-    queue: &'a SBQueue<B, N>,
+    queue: &'a Queue<B, N>,
     buffer_index: usize,
     range: Range<usize>,
     slice: B::Slice<'a>,
@@ -218,7 +214,7 @@ where
     B: Buffer,
 {
     pub(crate) fn new(
-        queue: &'a SBQueue<B, N>,
+        queue: &'a Queue<B, N>,
         buffer_index: usize,
         range: Range<usize>,
         slice: B::Slice<'a>,
@@ -238,9 +234,9 @@ where
     /// # Examples
     /// ```
     /// # use std::ops::Deref;
-    /// # use swap_buffer_queue::SBQueue;
+    /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
-    /// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+    /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// queue.try_enqueue(0).unwrap();
     /// queue.try_enqueue(1).unwrap();
     ///
@@ -262,7 +258,7 @@ where
     B::Slice<'a>: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.slice, f)
+        f.debug_tuple("BufferSlice").field(&self.slice).finish()
     }
 }
 
@@ -300,7 +296,7 @@ where
     B: Buffer + Drain,
 {
     type Item = B::Value;
-    type IntoIter = BufferIter<'a, B, N>;
+    type IntoIter = BufferIter<&'a Queue<B, N>, B, N>;
 
     fn into_iter(self) -> Self::IntoIter {
         let slice = ManuallyDrop::new(self);
@@ -308,6 +304,7 @@ where
             queue: slice.queue,
             buffer_index: slice.buffer_index,
             range: slice.range.clone(),
+            _phantom: PhantomData,
         }
     }
 }
@@ -319,9 +316,9 @@ where
 /// # Examples
 /// ```
 /// # use std::ops::Deref;
-/// # use swap_buffer_queue::SBQueue;
+/// # use swap_buffer_queue::Queue;
 /// # use swap_buffer_queue::buffer::VecBuffer;
-/// let queue: SBQueue<VecBuffer<usize>> = SBQueue::with_capacity(42);
+/// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
 /// queue.try_enqueue(0).unwrap();
 /// queue.try_enqueue(1).unwrap();
 ///
@@ -332,26 +329,84 @@ where
 /// assert_eq!(iter.next(), Some(1));
 /// assert_eq!(iter.next(), None);
 /// ```
-pub struct BufferIter<'a, B, N>
+pub struct BufferIter<Q, B, N>
 where
-    B: Buffer + Drain,
+    Q: Borrow<Queue<B, N>>,
+    B: Buffer,
 {
-    queue: &'a SBQueue<B, N>,
+    queue: Q,
     buffer_index: usize,
     range: Range<usize>,
+    _phantom: PhantomData<Queue<B, N>>,
 }
 
-impl<'a, B, N> Drop for BufferIter<'a, B, N>
+impl<Q, B, N> BufferIter<Q, B, N>
 where
-    B: Buffer + Drain,
+    Q: Borrow<Queue<B, N>>,
+    B: Buffer,
 {
-    fn drop(&mut self) {
-        self.queue.requeue(self.buffer_index, self.range.clone());
+    /// Returns a "owned" version of the buffer iterator using a "owned" version of the queue.
+    ///
+    /// # Examples
+    /// ```
+    /// # use std::ops::Deref;
+    /// # use std::sync::Arc;
+    /// # use swap_buffer_queue::Queue;
+    /// # use swap_buffer_queue::buffer::VecBuffer;
+    /// let queue: Arc<Queue<VecBuffer<usize>>> = Arc::new(Queue::with_capacity(42));
+    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue(1).unwrap();
+    ///
+    /// let mut iter = queue
+    ///     .try_dequeue()
+    ///     .unwrap()
+    ///     .into_iter()
+    ///     .with_owned(queue.clone());
+    /// drop(queue); // iter is "owned", queue can be dropped
+    /// assert_eq!(iter.next(), Some(0));
+    /// assert_eq!(iter.next(), Some(1));
+    /// assert_eq!(iter.next(), None);
+    /// ```
+    pub fn with_owned<O>(self, queue: O) -> BufferIter<O, B, N>
+    where
+        O: Borrow<Queue<B, N>>,
+    {
+        let iter = ManuallyDrop::new(self);
+        assert!(ptr::eq(iter.queue.borrow(), queue.borrow()));
+        BufferIter {
+            queue,
+            buffer_index: iter.buffer_index,
+            range: iter.range.clone(),
+            _phantom: PhantomData,
+        }
     }
 }
 
-impl<'a, B, N> Iterator for BufferIter<'a, B, N>
+impl<Q, B, N> fmt::Debug for BufferIter<Q, B, N>
 where
+    Q: Borrow<Queue<B, N>>,
+    B: Buffer,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("BufferIter").field(&self.range).finish()
+    }
+}
+
+impl<Q, B, N> Drop for BufferIter<Q, B, N>
+where
+    Q: Borrow<Queue<B, N>>,
+    B: Buffer,
+{
+    fn drop(&mut self) {
+        self.queue
+            .borrow()
+            .requeue(self.buffer_index, self.range.clone());
+    }
+}
+
+impl<Q, B, N> Iterator for BufferIter<Q, B, N>
+where
+    Q: Borrow<Queue<B, N>>,
     B: Buffer + Drain,
 {
     type Item = B::Value;
@@ -360,7 +415,10 @@ where
         if self.range.is_empty() {
             return None;
         }
-        let (value, size) = self.queue.remove(self.buffer_index, self.range.start);
+        let (value, size) = self
+            .queue
+            .borrow()
+            .remove(self.buffer_index, self.range.start);
         self.range.start += size;
         debug_assert!(self.range.start <= self.range.end);
         Some(value)
@@ -371,6 +429,16 @@ where
     }
 }
 
-impl<'a, B, N> ExactSizeIterator for BufferIter<'a, B, N> where B: Buffer + Drain {}
+impl<Q, B, N> ExactSizeIterator for BufferIter<Q, B, N>
+where
+    Q: Borrow<Queue<B, N>>,
+    B: Buffer + Drain,
+{
+}
 
-impl<'a, B, N> FusedIterator for BufferIter<'a, B, N> where B: Buffer + Drain {}
+impl<Q, B, N> FusedIterator for BufferIter<Q, B, N>
+where
+    Q: Borrow<Queue<B, N>>,
+    B: Buffer + Drain,
+{
+}
