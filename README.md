@@ -8,18 +8,15 @@ It is especially well suited for IO writing workflow, see [buffer implementation
 
 The crate is *no_std* (some buffer implementations may require `std`).
 
-# Disclaimer
-
-This library is at early state of development (and it's also my first Rust library). Waiting the crate publication, its documentation is available at https://wyfo.github.io/swap-buffer-queue/. Any feedback is welcome.
 
 # Example
 
 ```rust
 use std::ops::Deref;
-use swap_buffer_queue::{buffer::VecBuffer, SBQueue};
+use swap_buffer_queue::{buffer::VecBuffer, Queue};
 
 // Initialize the queue with a capacity
-let queue: SBQueue<VecBuffer<usize>, usize> = SBQueue::with_capacity(42);
+let queue: Queue<VecBuffer<usize>, usize> = Queue::with_capacity(42);
 // Enqueue some values
 queue.try_enqueue(0).unwrap();
 queue.try_enqueue(1).unwrap();
@@ -41,7 +38,7 @@ In addition to simple [`ArrayBuffer`](https://docs.rs/swap-buffer-queue/latest/s
 [`WriteVecBuffer`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/write/struct.WriteVecBuffer.html) are well suited when there are objects to be serialized with a known-serialization size. Indeed, objects can then be serialized directly on the queue's buffer, avoiding allocation.
 
 ```rust
-use swap_buffer_queue::SBQueue;
+use swap_buffer_queue::Queue;
 use swap_buffer_queue::write::{WriteBytesSlice, WriteVecBuffer};
 
 // the slice to be written in the queue's buffer (not too complex for the example)
@@ -57,7 +54,7 @@ impl WriteBytesSlice for Slice {
 }
 //!
 // Creates a WriteVecBuffer queue with a 2-bytes header
-let queue: SBQueue<WriteVecBuffer<2>, Slice> = SBQueue::with_capacity((1 << 16) - 1);
+let queue: Queue<WriteVecBuffer<2>, Slice> = Queue::with_capacity((1 << 16) - 1);
 queue.try_enqueue(Slice(vec![0; 256])).unwrap();
 queue.try_enqueue(Slice(vec![42; 42])).unwrap();
 let mut slice = queue.try_dequeue().unwrap();
@@ -83,10 +80,10 @@ As a convenience, total size of the buffered io-slices can be retrieved.
 ```rust
 use std::io::{IoSlice, Write};
 use swap_buffer_queue::{write_vectored::WriteVectoredVecBuffer};
-use swap_buffer_queue::SBQueue;
+use swap_buffer_queue::Queue;
 
 // Creates a WriteVectoredVecBuffer queue
-let queue: SBQueue<WriteVectoredVecBuffer<Vec<u8>>, Vec<u8>> = SBQueue::with_capacity(100);
+let queue: Queue<WriteVectoredVecBuffer<Vec<u8>>, Vec<u8>> = Queue::with_capacity(100);
 queue.try_enqueue(vec![0; 256]).unwrap();
 queue.try_enqueue(vec![42; 42]).unwrap();
 let mut slice = queue.try_dequeue().unwrap();
@@ -98,20 +95,31 @@ let mut writer: Vec<u8> = Default::default();
 assert_eq!(writer.write_vectored(&mut frame).unwrap(), 300);
 ```
 
-# Performance
-
-*TODO*
-
 # How it works 
 
 Internally, this queue use 2 buffers: one being used for enqueuing while the other is dequeued. 
 
-When [`SBQueue::try_enqueue`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/struct.SBQueue.html#method.try_enqueue) is called, it reserves atomically a slot in the current enqueuing buffer. The value is then inserted in the slot.
+When [`Queue::try_enqueue`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/struct.Queue.html#method.try_enqueue) is called, it reserves atomically a slot in the current enqueuing buffer. The value is then inserted in the slot.
 
-When [`SBQueue::try_dequeue`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/struct.SBQueue.html#method.try_dequeue) is called, both buffers are swapped atomically, so dequeued buffer will contain previously enqueued values, and new enqueued ones will go to the other (empty) buffer. 
+When [`Queue::try_dequeue`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/struct.Queue.html#method.try_dequeue) is called, both buffers are swapped atomically, so dequeued buffer will contain previously enqueued values, and new enqueued ones will go to the other (empty) buffer. 
 
 As the two-phase enqueuing cannot be atomic, the queue can be in a transitory state, where slots have been reserved but have not been written yet.
 This issue is mitigated using a spin loop in dequeuing method.
 If the spin loop fails, the transitory state is saved and spin loop will be retried at the next dequeue.
 
-Buffers can also be resized after being dequeued, just before the swap.
+# Performance
+
+swap-buffer-queue is very performant – it's actually the fastest MPSC queue I know.
+
+Here is the crossbeam benchmark [forked](https://github.com/wyfo/crossbeam/tree/bench_sbq/crossbeam-channel/benchmarks)
+
+| benchmark     | crossbeam | swap-buffer-queue |
+|---------------|-----------|-------------------|
+| bounded1_mpsc | 1.545s    | 1.341s            |
+| bounded1_spsc | 1.652s    | 1.138s            |
+| bounded_mpsc  | 0.362s    | 0.178s            |
+| bounded_seq   | 0.190s    | 0.156s            |
+| bounded_spsc  | 0.115s    | 0.139s            |
+
+However, a large enough capacity is required to reach maximum performance; otherwise, high contention scenario may be penalized.
+This is because the algorithm put all the contention on a single atomic integer (instead of two for crossbeam).

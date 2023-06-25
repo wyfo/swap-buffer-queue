@@ -2,6 +2,21 @@
 name = "swap-buffer-queue"
 version = "0.1.0"
 edition = "2021"
+exclude = [".*"]
+description = "A buffering MPSC queue."
+homepage = "https://github.com/wyfo/swap-buffer-queue"
+readme = "README.md"
+keywords = [
+    "atomic",
+    "lock-free",
+]
+categories = [
+    "concurrency",
+    "data-structures",
+    "no-std",
+]
+license = "MIT"
+repository = "https://github.com/wyfo/swap-buffer-queue"
 
 [features]
 default = ["futures"]
