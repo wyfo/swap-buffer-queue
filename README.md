@@ -1,5 +1,12 @@
 # swap-buffer-queue
 
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](
+https://github.com/wyfo/swap-buffer-queue/blob/main/LICENSE)
+[![Cargo](https://img.shields.io/crates/v/swap-buffer-queue.svg)](
+https://crates.io/crates/swap-buffer-queue)
+[![Documentation](https://docs.rs/swap-buffer-queue/badge.svg)](
+https://docs.rs/swap-buffer-queue)
+
 A buffering MPSC queue.
 
 This library is intended to be a (better, I hope) alternative to traditional MPSC queues in the context of a buffering consumer, by moving the buffering part directly into the queue.
