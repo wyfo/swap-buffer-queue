@@ -1,9 +1,15 @@
-use std::{fmt, ops::Range};
+use std::{
+    cell::UnsafeCell,
+    fmt,
+    num::NonZeroUsize,
+    ops::Range,
+    panic::{RefUnwindSafe, UnwindSafe},
+};
 
 use crossbeam_utils::CachePadded;
 
 use crate::{
-    buffer::{Buffer, BufferSlice, BufferValue, BufferWithLen, Drain, Resize},
+    buffer::{Buffer, BufferSlice, BufferValue, Drain, Resize},
     error::{TryDequeueError, TryEnqueueError},
     loom::{
         atomic::{AtomicUsize, Ordering},
@@ -13,17 +19,161 @@ use crate::{
 };
 
 const CLOSED_FLAG: usize = (usize::MAX >> 1) + 1;
+const DEQUEUING_LOCKED: usize = usize::MAX;
+
+/// Atomic usize with the following (64bit) representation
+/// 64------------63---------------------1--------------0
+/// | closed flag |  enqueuing capacity  | buffer index |
+/// +-------------+----------------------+--------------+
+/// *buffer index* bit is the index (0 or 1) of the enqueuing buffer
+/// *enqueuing capacity* is the remaining enqueuing capacity, starting at the capacity of the
+/// buffer, and decreasing until zero
+/// *closed flag* is a bit flag to mark the queue as closed
+#[derive(Copy, Clone)]
+#[repr(transparent)]
+struct EnqueuingCapacity(usize);
+
+impl EnqueuingCapacity {
+    #[inline]
+    fn new(buffer_index: usize, capacity: usize) -> Self {
+        assert!(capacity << 1 < CLOSED_FLAG);
+        Self(buffer_index | (capacity << 1))
+    }
+
+    #[inline] // I've found compiler not inlining this function
+    fn buffer_index(self) -> usize {
+        self.0 & 1
+    }
+
+    #[inline]
+    fn remaining_capacity(self) -> usize {
+        (self.0 & !CLOSED_FLAG) >> 1
+    }
+
+    #[inline]
+    fn is_closed(self) -> bool {
+        self.0 & CLOSED_FLAG != 0
+    }
+
+    #[inline]
+    fn try_reserve(self, size: usize) -> Option<Self> {
+        self.0.checked_sub(size << 1).map(Self)
+    }
+
+    #[inline]
+    fn with_closed(self, enqueuing: Self) -> Self {
+        Self(self.0 | (enqueuing.0 & CLOSED_FLAG))
+    }
+
+    #[inline]
+    fn from_atomic(atomic: usize) -> Self {
+        Self(atomic)
+    }
+
+    #[inline]
+    fn into_atomic(self) -> usize {
+        self.0
+    }
+
+    #[inline]
+    fn close(atomic: &AtomicUsize, ordering: Ordering) {
+        atomic.fetch_or(CLOSED_FLAG, ordering);
+    }
+
+    #[inline]
+    fn reopen(atomic: &AtomicUsize, ordering: Ordering) {
+        atomic.fetch_and(!CLOSED_FLAG, ordering);
+    }
+
+    #[inline]
+    fn check_overflow(capacity: usize) {
+        assert!(
+            capacity < usize::MAX >> 2,
+            "capacity must be lower than `usize::MAX >> 2`"
+        );
+    }
+}
+
+/// Atomic usize with the following (64bit) representation
+/// 64-------------------1--------------0
+/// |  dequeuing length  | buffer index |
+/// +--------------------+--------------+
+/// *buffer index* bit is the index (0 or 1) of the dequeuing buffer
+/// *dequeueing length* is the length currently dequeued
+#[derive(Copy, Clone)]
+struct DequeuingLength(usize);
+
+impl DequeuingLength {
+    #[inline]
+    fn new(buffer_index: usize, length: usize) -> Self {
+        Self(buffer_index | length << 1)
+    }
+
+    #[inline]
+    fn buffer_index(self) -> usize {
+        self.0 & 1
+    }
+
+    #[inline]
+    fn buffer_len(self) -> usize {
+        self.0 >> 1
+    }
+
+    #[inline]
+    fn try_from_atomic(atomic: usize) -> Result<Self, TryDequeueError> {
+        if atomic != DEQUEUING_LOCKED {
+            Ok(Self(atomic))
+        } else {
+            Err(TryDequeueError::Conflict)
+        }
+    }
+
+    #[inline]
+    fn into_atomic(self) -> usize {
+        self.0
+    }
+}
 
 /// A buffered MPSC "swap-buffer" queue.
 pub struct Queue<B, N = ()>
 where
     B: Buffer,
 {
-    buffer_remain: CachePadded<AtomicUsize>,
-    pending_dequeue: CachePadded<AtomicUsize>,
-    buffers: [BufferWithLen<B>; 2],
+    enqueuing_capacity: CachePadded<AtomicUsize>,
+    dequeuing_length: CachePadded<AtomicUsize>,
+    buffers: [UnsafeCell<B>; 2],
+    buffers_length: [CachePadded<AtomicUsize>; 2],
     capacity: AtomicUsize,
     notify: N,
+}
+
+// SAFETY: Buffers' `UnsafeCell` accesses are synchronized by the algorithm to
+// respect borrowing rules
+unsafe impl<B, N> Send for Queue<B, N>
+where
+    B: Buffer,
+    N: Send,
+{
+}
+// SAFETY: Buffers' `UnsafeCell` accesses are synchronized by the algorithm to
+// respect borrowing rules
+unsafe impl<B, N> Sync for Queue<B, N>
+where
+    B: Buffer,
+    N: Sync,
+{
+}
+impl<B, N> UnwindSafe for Queue<B, N>
+where
+    B: Buffer,
+    N: UnwindSafe,
+{
+}
+impl<B, N> RefUnwindSafe for Queue<B, N>
+where
+    B: Buffer,
+    N: RefUnwindSafe,
+{
 }
 
 impl<B, N> Queue<B, N>
@@ -42,12 +192,15 @@ where
     /// let queue: Queue<VecBuffer<usize>> = Queue::new();
     /// ```
     pub fn new() -> Self {
-        let buffers: [BufferWithLen<B>; 2] = Default::default();
-        let capacity = buffers[0].capacity();
+        let mut buffers: [UnsafeCell<B>; 2] = Default::default();
+        let capacity = buffers[0].get_mut().capacity();
+        EnqueuingCapacity::check_overflow(capacity);
         Self {
-            buffer_remain: AtomicUsize::new(capacity << 1).into(),
-            pending_dequeue: AtomicUsize::new(0).into(),
+            enqueuing_capacity: AtomicUsize::new(EnqueuingCapacity::new(0, capacity).into_atomic())
+                .into(),
+            dequeuing_length: AtomicUsize::new(DequeuingLength::new(1, 0).into_atomic()).into(),
             buffers,
+            buffers_length: Default::default(),
             capacity: AtomicUsize::new(capacity),
             notify: Default::default(),
         }
@@ -68,13 +221,16 @@ where
     /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// ```
     pub fn with_capacity(capacity: usize) -> Self {
+        EnqueuingCapacity::check_overflow(capacity);
+        let mut buffers: [UnsafeCell<B>; 2] = Default::default();
+        buffers[0].get_mut().resize(capacity);
+        buffers[1].get_mut().resize(capacity);
         Self {
-            buffer_remain: AtomicUsize::new(capacity << 1).into(),
-            pending_dequeue: AtomicUsize::new(0).into(),
-            buffers: [
-                BufferWithLen::with_capacity(capacity),
-                BufferWithLen::with_capacity(capacity),
-            ],
+            enqueuing_capacity: AtomicUsize::new(EnqueuingCapacity::new(0, capacity).into_atomic())
+                .into(),
+            dequeuing_length: AtomicUsize::new(DequeuingLength::new(1, 0).into_atomic()).into(),
+            buffers,
+            buffers_length: Default::default(),
             capacity: AtomicUsize::new(capacity),
             notify: Default::default(),
         }
@@ -96,11 +252,12 @@ where
     /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// queue.notify().notify_dequeue();
     /// ```
+    #[inline]
     pub fn notify(&self) -> &N {
         &self.notify
     }
 
-    /// Returns the current buffer capacity.
+    /// Returns the current enqueuing buffer capacity.
     ///
     /// # Examples
     /// ```
@@ -109,12 +266,13 @@ where
     /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// assert_eq!(queue.capacity(), 42);
     /// ```
+    #[inline]
     pub fn capacity(&self) -> usize {
         // cannot use `Buffer::capacity` because of data race
         self.capacity.load(Ordering::Relaxed)
     }
 
-    /// Returns the current buffer length.
+    /// Returns the current enqueuing buffer length.
     ///
     /// # Examples
     /// ```
@@ -126,10 +284,13 @@ where
     /// assert_eq!(queue.len(), 1);
     /// ```
     pub fn len(&self) -> usize {
-        self.buffers[self.buffer_remain.load(Ordering::Relaxed) & 1].len()
+        let enqueuing =
+            EnqueuingCapacity::from_atomic(self.enqueuing_capacity.load(Ordering::Relaxed));
+        self.capacity()
+            .saturating_sub(enqueuing.remaining_capacity())
     }
 
-    /// Returns `true` if the current buffer is empty.
+    /// Returns `true` if the current enqueuing buffer is empty.
     ///
     /// # Examples
     /// ```
@@ -154,7 +315,7 @@ where
     /// assert!(queue.is_closed());
     /// ```
     pub fn is_closed(&self) -> bool {
-        self.buffer_remain.load(Ordering::Acquire) & CLOSED_FLAG != 0
+        EnqueuingCapacity::from_atomic(self.enqueuing_capacity.load(Ordering::Relaxed)).is_closed()
     }
 
     /// Reopen a closed queue.
@@ -172,23 +333,137 @@ where
     /// assert!(!queue.is_closed());
     /// ```
     pub fn reopen(&self) {
-        self.buffer_remain.fetch_and(!CLOSED_FLAG, Ordering::AcqRel);
+        EnqueuingCapacity::reopen(&self.enqueuing_capacity, Ordering::AcqRel);
     }
 
-    fn try_dequeue_spin(&self, buffer_index: usize, len: usize) -> Option<BufferSlice<B, N>> {
-        assert_ne!(len, 0);
-        let buffer = &self.buffers[buffer_index];
+    #[inline]
+    fn lock_dequeuing(&self) -> Result<DequeuingLength, TryDequeueError> {
+        // Protect from concurrent dequeuing by swapping the dequeuing length with a constant
+        // marking dequeuing conflict.
+        DequeuingLength::try_from_atomic(
+            self.dequeuing_length
+                .swap(DEQUEUING_LOCKED, Ordering::Relaxed),
+        )
+    }
+
+    #[allow(clippy::type_complexity)]
+    const NO_RESIZE: Option<Box<dyn FnOnce(&mut B) -> (bool, usize)>> = None;
+
+    #[inline]
+    fn try_dequeue_internal(
+        &self,
+        dequeuing: DequeuingLength,
+        notify_enqueue: impl Fn(),
+        resize: Option<impl FnOnce(&mut B) -> (bool, usize)>,
+    ) -> Result<BufferSlice<B, N>, TryDequeueError> {
+        // If dequeuing length is greater than zero, it means than previous dequeuing is still
+        // ongoing, either because previous `try_dequeue` operation returns pending error,
+        // or because requeuing (after partial draining for example).
+        if let Some(len) = NonZeroUsize::new(dequeuing.buffer_len()) {
+            return self
+                .try_dequeue_spin(dequeuing.buffer_index(), len)
+                .ok_or(TryDequeueError::Pending);
+        }
+        let next_buffer_index = dequeuing.buffer_index();
+        // SAFETY: Dequeuing buffer can be accessed mutably
+        let next_buffer_mut = unsafe { &mut *self.buffers[next_buffer_index].get() };
+        // Resize buffer if needed.
+        let (resized, inserted_length) = resize.map_or((false, 0), |f| f(next_buffer_mut));
+        if inserted_length > 0 {
+            self.buffers_length[next_buffer_index].fetch_add(inserted_length, Ordering::Relaxed);
+        }
+        let mut enqueuing =
+            EnqueuingCapacity::from_atomic(self.enqueuing_capacity.load(Ordering::Acquire));
+        debug_assert_ne!(dequeuing.buffer_index(), enqueuing.buffer_index());
+        // SAFETY: Enqueuing buffer can be immutably accessed.
+        let buffer = unsafe { &*self.buffers[enqueuing.buffer_index()].get() };
+        // If buffer is empty and has not be resized, return an error (and store back dequeuing)
+        if enqueuing.remaining_capacity() == buffer.capacity() && !resized && inserted_length == 0 {
+            self.dequeuing_length
+                .store(dequeuing.into_atomic(), Ordering::Relaxed);
+            return Err(if enqueuing.is_closed() {
+                TryDequeueError::Closed
+            } else {
+                TryDequeueError::Empty
+            });
+        }
+        // Swap buffers: previous dequeuing buffer become the enqueuing one
+        let next_capa = next_buffer_mut.capacity();
+        let next_enqueuing = EnqueuingCapacity::new(next_buffer_index, next_capa - inserted_length);
+        let backoff = Backoff::new();
+        while let Err(enq) = self.enqueuing_capacity.compare_exchange_weak(
+            enqueuing.into_atomic(),
+            next_enqueuing.with_closed(enqueuing).into_atomic(),
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        ) {
+            enqueuing = EnqueuingCapacity::from_atomic(enq);
+            // Spin in case of concurrent modifications, except when the buffer is full ofc.
+            if enqueuing.remaining_capacity() != 0 {
+                backoff.spin();
+            }
+        }
+        // Update the queue capacity if needed.
+        if self.capacity() != next_capa {
+            self.capacity.store(next_capa, Ordering::Relaxed);
+        }
+        // Notify enqueuers.
+        notify_enqueue();
+        match NonZeroUsize::new(buffer.capacity() - enqueuing.remaining_capacity()) {
+            // Try to wait ongoing insertions and take ownership of the buffer, then return the
+            // buffer slice
+            Some(len) => self
+                .try_dequeue_spin(enqueuing.buffer_index(), len)
+                .ok_or(TryDequeueError::Pending),
+            // If the enqueuing buffer was empty, but values has been inserted while resizing,
+            // retry.
+            None if inserted_length > 0 => self.try_dequeue_internal(
+                DequeuingLength::new(enqueuing.buffer_index(), 0),
+                notify_enqueue,
+                Self::NO_RESIZE,
+            ),
+            // Otherwise, (empty enqueuing buffer, resized dequeuing one), acknowledge the swap and
+            // return empty error
+            None => {
+                debug_assert!(resized);
+                self.dequeuing_length.store(
+                    DequeuingLength::new(enqueuing.buffer_index(), 0).into_atomic(),
+                    Ordering::Relaxed,
+                );
+                Err(TryDequeueError::Empty)
+            }
+        }
+    }
+
+    fn try_dequeue_spin(
+        &self,
+        buffer_index: usize,
+        length: NonZeroUsize,
+    ) -> Option<BufferSlice<B, N>> {
         let backoff = Backoff::new();
         loop {
-            let buffer_len = buffer.len();
-            if buffer_len >= len {
-                let range = buffer_len - len..buffer_len;
-                let slice = unsafe { buffer.slice(range.clone()) };
+            // Buffers having been swapped, no more enqueuing can happen, we still need to wait
+            // for ongoing one. They will be finished when the buffer length (updated after
+            // enqueuing) is equal to the expected one.
+            // Also, requeuing with potential draining can lead to have an expected length lower
+            // than the effective buffer length.
+            let buffer_len = self.buffers_length[buffer_index].load(Ordering::Acquire);
+            if buffer_len >= length.get() {
+                // SAFETY: All enqueuings are done, and buffers having been swapped, this buffer
+                // can now be accessed mutably.
+                let buffer_mut = unsafe { &mut *self.buffers[buffer_index].get() };
+                // Returns the slice (range can be shortened by draining + requeuing).
+                let range = buffer_len - length.get()..buffer_len;
+                // SAFETY: All enqueuing are done, range has been inserted.
+                let slice = unsafe { buffer_mut.slice(range.clone()) };
                 return Some(BufferSlice::new(self, buffer_index, range, slice));
             }
+            // If the enqueuing are still ongoing, just save the dequeuing state in order to retry.
             if backoff.is_completed() {
-                self.pending_dequeue
-                    .store(buffer_index | (len << 1), Ordering::Relaxed);
+                self.dequeuing_length.store(
+                    DequeuingLength::new(buffer_index, length.get()).into_atomic(),
+                    Ordering::Relaxed,
+                );
                 return None;
             } else {
                 backoff.snooze();
@@ -197,19 +472,30 @@ where
     }
 
     pub(crate) fn release(&self, buffer_index: usize, range: Range<usize>) {
-        unsafe { self.buffers[buffer_index].clear(range) };
-        self.pending_dequeue
-            .store(!buffer_index & 1, Ordering::Relaxed);
+        // Clears the dequeuing buffer and its length, and release the dequeuing "lock".
+        // SAFETY: Dequeued buffer pointed by buffer index can be accessed mutably
+        // (see `Queue::try_dequeue_spin`).
+        let buffer_mut = unsafe { &mut *self.buffers[buffer_index].get() };
+        // SAFETY: Range comes from the dequeued slice, so it has been previously inserted.
+        unsafe { buffer_mut.clear(range) };
+        self.buffers_length[buffer_index].store(0, Ordering::Release);
+        self.dequeuing_length.store(
+            DequeuingLength::new(buffer_index, 0).into_atomic(),
+            Ordering::Relaxed,
+        );
     }
 
     pub(crate) fn requeue(&self, buffer_index: usize, range: Range<usize>) {
-        if range.is_empty() {
-            self.release(buffer_index, range);
-        } else {
-            self.pending_dequeue.store(
-                buffer_index | ((range.end - range.start) << 1),
+        // Requeuing the buffer just means saving the dequeuing state (or release if there is
+        // nothing to requeue).
+        let length = range.end - range.start;
+        if length > 0 {
+            self.dequeuing_length.store(
+                DequeuingLength::new(buffer_index, length).into_atomic(),
                 Ordering::Relaxed,
             );
+        } else {
+            self.release(buffer_index, range);
         }
     }
 }
@@ -244,109 +530,51 @@ where
     where
         T: BufferValue<B>,
     {
-        let shifted_size = value.size() << 1;
-        let mut buffer_remain = self.buffer_remain.load(Ordering::Acquire);
+        // Compare-and-swap loop with backoff in order to mitigate contention on the atomic field
+        let value_size = value.size();
+        let mut enqueuing =
+            EnqueuingCapacity::from_atomic(self.enqueuing_capacity.load(Ordering::Acquire));
         let backoff = Backoff::new();
         let mut spin = false;
         loop {
-            if buffer_remain & CLOSED_FLAG != 0 {
+            // Check if the queue is not closed and try to reserve a slice of the buffer.
+            if enqueuing.is_closed() {
                 return Err(TryEnqueueError::Closed(value));
             }
-            if buffer_remain < shifted_size {
+            let Some(next_enq) = enqueuing.try_reserve(value_size) else {
                 return Err(TryEnqueueError::InsufficientCapacity(value));
-            }
+            };
             if spin {
                 backoff.spin();
             }
-            match self.buffer_remain.compare_exchange_weak(
-                buffer_remain,
-                buffer_remain - shifted_size,
+            match self.enqueuing_capacity.compare_exchange_weak(
+                enqueuing.into_atomic(),
+                next_enq.into_atomic(),
                 Ordering::AcqRel,
                 Ordering::Relaxed,
             ) {
                 Ok(_) => break,
-                Err(remain) => {
-                    spin = remain & 1 == buffer_remain & 1;
-                    buffer_remain = remain;
+                Err(enq) => {
+                    enqueuing = EnqueuingCapacity::from_atomic(enq);
+                    // Spin in case of concurrent modification, except when the buffer index has
+                    // modified, which may mean conflict was due to dequeuing.
+                    spin = next_enq.buffer_index() == enqueuing.buffer_index();
                 }
             }
         }
-        let buffer = &self.buffers[buffer_remain & 1];
-        let index = buffer.capacity() - (buffer_remain >> 1);
-        unsafe { buffer.insert(index, value) };
+        // Insert the value into the buffer at the index given by subtracting the remaining
+        // capacity to the buffer one.
+        // SAFETY: As long as enqueuing is ongoing, i.e. a reserved slice has not been acknowledged
+        // in the buffer length (see `BufferWithLength::insert`), buffer cannot be dequeued and can
+        // thus be accessed immutably (see `Queue::try_dequeue_spin`).
+        let buffer = unsafe { &*self.buffers[enqueuing.buffer_index()].get() };
+        // SAFETY: Compare-and-swap makes indexes not overlap, and the buffer is cleared before
+        // reusing it for enqueuing (see `Queue::release`).
+        unsafe { value.insert_into(buffer, buffer.capacity() - enqueuing.remaining_capacity()) };
+        self.buffers_length[enqueuing.buffer_index()].fetch_add(1, Ordering::AcqRel);
+        // Notify dequeuer.
         self.notify.notify_dequeue();
         Ok(())
-    }
-
-    fn try_dequeue_internal(
-        &self,
-        resize: Option<impl FnOnce(&BufferWithLen<B>) -> usize>,
-        insert: Option<impl FnOnce(&BufferWithLen<B>) -> usize>,
-    ) -> Result<BufferSlice<B, N>, TryDequeueError> {
-        let pending_dequeue = self.pending_dequeue.swap(usize::MAX, Ordering::Relaxed);
-        if pending_dequeue == usize::MAX {
-            return Err(TryDequeueError::Conflict);
-        }
-        let buffer_index = pending_dequeue & 1;
-        if pending_dequeue >> 1 != 0 {
-            return self
-                .try_dequeue_spin(buffer_index, pending_dequeue >> 1)
-                .ok_or(TryDequeueError::Pending);
-        }
-        let next_buffer_index = buffer_index ^ 1;
-        let next_buffer = &self.buffers[next_buffer_index];
-        let mut next_capa = next_buffer.capacity();
-        let mut capa_updated = false;
-        let mut update_capa = |capa| {
-            if capa != next_capa {
-                next_capa = capa;
-                capa_updated = true;
-            }
-        };
-        if let Some(resize) = resize {
-            update_capa(resize(next_buffer));
-        }
-        if let Some(insert) = insert {
-            update_capa(insert(next_buffer));
-        }
-        let next_buffer_remain = next_buffer_index | (next_capa << 1);
-        let mut buffer_remain = self.buffer_remain.load(Ordering::Acquire);
-        assert_eq!(buffer_index, buffer_remain & 1);
-        let capacity = self.buffers[buffer_index].capacity();
-        if ((buffer_remain & !CLOSED_FLAG) >> 1) == capacity && !capa_updated {
-            self.pending_dequeue
-                .store(pending_dequeue, Ordering::Relaxed);
-            return Err(if buffer_remain & CLOSED_FLAG != 0 {
-                TryDequeueError::Closed
-            } else {
-                TryDequeueError::Empty
-            });
-        }
-        let backoff = Backoff::new();
-        while let Err(s) = self.buffer_remain.compare_exchange_weak(
-            buffer_remain,
-            next_buffer_remain | (buffer_remain & CLOSED_FLAG),
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        ) {
-            buffer_remain = s;
-            if buffer_remain >> 1 != 0 {
-                backoff.spin();
-            }
-        }
-        if self.capacity() != next_buffer.capacity() {
-            self.capacity
-                .store(next_buffer.capacity(), Ordering::Relaxed);
-        }
-        self.notify.notify_enqueue();
-        let len = capacity - ((buffer_remain & !CLOSED_FLAG) >> 1);
-        if capa_updated && len == 0 {
-            self.pending_dequeue
-                .store(!buffer_index & 1, Ordering::Relaxed);
-            return Err(TryDequeueError::Empty);
-        }
-        self.try_dequeue_spin(buffer_index, len)
-            .ok_or(TryDequeueError::Pending)
     }
 
     /// Tries dequeuing a buffer with all enqueued values from the queue.
@@ -389,8 +617,9 @@ where
     /// ```
     pub fn try_dequeue(&self) -> Result<BufferSlice<B, N>, TryDequeueError> {
         self.try_dequeue_internal(
-            None::<&dyn Fn(&BufferWithLen<B>) -> usize>,
-            None::<&dyn Fn(&BufferWithLen<B>) -> usize>,
+            self.lock_dequeuing()?,
+            || self.notify.notify_enqueue(),
+            Self::NO_RESIZE,
         )
     }
 
@@ -414,7 +643,7 @@ where
     /// assert_eq!(queue.try_dequeue().unwrap_err(), TryDequeueError::Closed);
     /// ```
     pub fn close(&self) {
-        self.buffer_remain.fetch_or(CLOSED_FLAG, Ordering::AcqRel);
+        EnqueuingCapacity::close(&self.enqueuing_capacity, Ordering::AcqRel);
         self.notify.notify_dequeue();
         self.notify.notify_enqueue();
     }
@@ -509,23 +738,11 @@ where
     /// let overflow = Mutex::new(Vec::new());
     /// assert_eq!(queue.capacity(), 0);
     /// enqueue_unbounded(&queue, &overflow, 0).unwrap();
-    /// assert_eq!(queue.capacity(), 0);
-    /// assert_eq!(
-    ///     try_dequeue_unbounded(&queue, &overflow).unwrap_err(),
-    ///     TryDequeueError::Empty
-    /// );
-    /// assert_eq!(queue.capacity(), 1);
-    /// assert_eq!(queue.len(), 1);
-    /// enqueue_unbounded(&queue, &overflow, 1).unwrap();
-    /// assert_eq!(queue.capacity(), 1);
-    /// assert_eq!(queue.len(), 1);
-    /// assert_eq!(overflow.lock().unwrap().len(), 1);
     /// assert_eq!(
     ///     try_dequeue_unbounded(&queue, &overflow).unwrap().deref(),
     ///     &[0]
     /// );
-    /// assert_eq!(queue.capacity(), 2);
-    /// assert_eq!(queue.len(), 1);
+    /// enqueue_unbounded(&queue, &overflow, 1).unwrap();
     /// enqueue_unbounded(&queue, &overflow, 2).unwrap();
     /// assert_eq!(
     ///     try_dequeue_unbounded(&queue, &overflow).unwrap().deref(),
@@ -540,27 +757,32 @@ where
     where
         T: BufferValue<B>,
     {
-        let capacity = capacity.into();
         self.try_dequeue_internal(
-            capacity.map(|capa| {
-                move |buf: &BufferWithLen<B>| {
-                    unsafe { buf.resize(capa) };
-                    capa
+            self.lock_dequeuing()?,
+            || self.notify.notify_enqueue(),
+            Some(move |buffer_mut: &mut B| {
+                let resized_capa = capacity
+                    .into()
+                    .filter(|capa| *capa != buffer_mut.capacity());
+                if let Some(capa) = resized_capa {
+                    EnqueuingCapacity::check_overflow(capa);
+                    buffer_mut.resize(capa);
                 }
-            }),
-            insert.map(|insert| {
-                |buf: &BufferWithLen<B>| {
-                    let mut next_capa = buf.capacity();
-                    for (i, value) in insert.enumerate() {
+                let mut length = 0;
+                if let Some(insert) = insert {
+                    for value in insert {
                         let value_size = value.size();
-                        if value_size > buf.capacity() {
+                        if value_size > buffer_mut.capacity() {
                             break;
                         }
-                        unsafe { buf.insert(i, value) };
-                        next_capa -= value_size;
+                        // SAFETY: Ranges `length..length+value.size()` will obviously not overlap,
+                        // and the buffer is cleared before reusing it for enqueuing
+                        // (see `Queue::release`)
+                        unsafe { value.insert_into(buffer_mut, length) };
+                        length += value_size;
                     }
-                    next_capa
                 }
+                (resized_capa.is_some(), length)
             }),
         )
     }
@@ -571,7 +793,16 @@ where
     B: Buffer + Drain,
 {
     pub(crate) fn remove(&self, buffer_index: usize, index: usize) -> (B::Value, usize) {
-        unsafe { self.buffers[buffer_index].remove(index) }
+        debug_assert_eq!(
+            self.dequeuing_length.load(Ordering::Relaxed),
+            DEQUEUING_LOCKED
+        );
+        // SAFETY: Dequeued buffer pointed by buffer index can be accessed mutably
+        // (see `Queue::try_dequeue_spin`).
+        let buffer_mut = unsafe { &mut *self.buffers[buffer_index].get() };
+        // SAFETY: Index comes from an iterator on the dequeued slice, so it has
+        // been previously inserted.
+        unsafe { buffer_mut.remove(index) }
     }
 }
 
@@ -604,10 +835,8 @@ where
     B: Buffer,
 {
     fn drop(&mut self) {
-        let pending_dequeue = self.pending_dequeue.swap(usize::MAX, Ordering::AcqRel);
-        let buffer_index = pending_dequeue & 1;
-        if pending_dequeue != usize::MAX && pending_dequeue >> 1 != 0 {
-            self.try_dequeue_spin(buffer_index, pending_dequeue >> 1);
-        }
+        self.lock_dequeuing()
+            .and_then(|deq| self.try_dequeue_internal(deq, || (), Self::NO_RESIZE))
+            .ok();
     }
 }

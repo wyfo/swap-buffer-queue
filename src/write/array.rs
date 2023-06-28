@@ -19,25 +19,31 @@ pub struct WriteArrayBuffer<
     const TRAILER_SIZE: usize = 0,
 >(ArrayWithHeaderAndTrailer<Cell<u8>, HEADER_SIZE, N, TRAILER_SIZE>);
 
+// SAFETY: Buffer values are `Copy` and already initialized
 unsafe impl<const N: usize, const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Buffer
     for WriteArrayBuffer<N, HEADER_SIZE, TRAILER_SIZE>
 {
     type Slice<'a> = BytesSlice<'a, HEADER_SIZE, TRAILER_SIZE>;
 
+    #[inline]
     fn capacity(&self) -> usize {
         N
     }
 
+    #[inline]
     unsafe fn slice(&mut self, range: Range<usize>) -> Self::Slice<'_> {
-        BytesSlice::new(
-            &mut *(&mut self.0[range.start..HEADER_SIZE + range.end + TRAILER_SIZE]
-                as *mut [Cell<u8>] as *mut [u8]),
-        )
+        // SAFETY: [Cell<u8>] has the same layout as [u8]
+        BytesSlice::new(unsafe {
+            &mut *(&mut self.0[range.start..HEADER_SIZE + range.end + TRAILER_SIZE] as *mut _
+                as *mut [u8])
+        })
     }
 
+    #[inline]
     unsafe fn clear(&mut self, _range: Range<usize>) {}
 }
 
+// SAFETY: Buffer values are `Copy` and already initialized
 unsafe impl<T, const N: usize, const HEADER_SIZE: usize, const TRAILER_SIZE: usize>
     BufferValue<WriteArrayBuffer<N, HEADER_SIZE, TRAILER_SIZE>> for T
 where
@@ -53,9 +59,12 @@ where
         index: usize,
     ) {
         let size = self.size();
-        self.write(&mut *UnsafeCell::raw_get(
-            &buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + size] as *const [Cell<u8>]
-                as *const UnsafeCell<[u8]>,
-        ));
+        // SAFETY: [Cell<u8>] has the same layout as UnsafeCell<[u8]>
+        self.write(unsafe {
+            &mut *UnsafeCell::raw_get(
+                &buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + size] as *const _
+                    as *const UnsafeCell<[u8]>,
+            )
+        });
     }
 }

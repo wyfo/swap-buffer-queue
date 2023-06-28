@@ -85,7 +85,7 @@ assert_eq!(
 As a convenience, total size of the buffered io-slices can be retrieved.
 
 ```rust
-use std::io::{IoSlice, Write};
+use std::io::{Write};
 use swap_buffer_queue::{write_vectored::WriteVectoredVecBuffer};
 use swap_buffer_queue::Queue;
 
@@ -96,7 +96,7 @@ queue.try_enqueue(vec![42; 42]).unwrap();
 let mut slice = queue.try_dequeue().unwrap();
 // Adds a header with the total size of the slices
 let total_size = (slice.total_size() as u16).to_be_bytes();
-let mut frame = slice.frame(.., Some(IoSlice::new(&total_size)), None);
+let mut frame = slice.frame(.., &total_size, None);
 // Let's pretend we have a writer
 let mut writer: Vec<u8> = Default::default();
 assert_eq!(writer.write_vectored(&mut frame).unwrap(), 300);
