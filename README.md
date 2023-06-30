@@ -16,7 +16,7 @@ It is especially well suited for IO writing workflow, see [buffer implementation
 The crate is *no_std* (some buffer implementations may require `std`).
 
 
-# Example
+## Example
 
 ```rust
 use std::ops::Deref;
@@ -35,11 +35,11 @@ assert_eq!(slice.into_iter().collect::<Vec<_>>(), vec![0, 1]);
 ```
 
 
-# Buffer implementations
+## Buffer implementations
 
 In addition to simple [`ArrayBuffer`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/buffer/struct.ArrayBuffer.html) and [`VecBuffer`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/buffer/struct.VecBuffer.html), this crate provides useful write-oriented implementations.
 
-## [`write`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/write/index.html)
+### [`write`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/write/index.html)
 
 [`WriteArrayBuffer`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/write/struct.WriteVecBuffer.html) and 
 [`WriteVecBuffer`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/write/struct.WriteVecBuffer.html) are well suited when there are objects to be serialized with a known-serialization size. Indeed, objects can then be serialized directly on the queue's buffer, avoiding allocation.
@@ -76,7 +76,7 @@ assert_eq!(
 );
 ```
 
-## [`write_vectored`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/write/index.html)
+### [`write_vectored`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/write/index.html)
 
 [`WriteVectoredArrayBuffer`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/write_vectored/struct.WriteVectoredVecBuffer.html) and
 [`WriteVectoredVecBuffer`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/write_vectored/struct.WriteVectoredVecBuffer.html) allows buffering a slice of [`IoSlice`](https://doc.rust-lang.org/std/io/struct.IoSlice.html), saving the cost of dequeuing io-slices one by one to collect them after.
@@ -102,7 +102,7 @@ let mut writer: Vec<u8> = Default::default();
 assert_eq!(writer.write_vectored(&mut frame).unwrap(), 300);
 ```
 
-# How it works 
+## How it works 
 
 Internally, this queue use 2 buffers: one being used for enqueuing while the other is dequeued. 
 
@@ -110,11 +110,25 @@ When [`Queue::try_enqueue`](https://docs.rs/swap-buffer-queue/latest/swap_buffer
 
 When [`Queue::try_dequeue`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/struct.Queue.html#method.try_dequeue) is called, both buffers are swapped atomically, so dequeued buffer will contain previously enqueued values, and new enqueued ones will go to the other (empty) buffer. 
 
-As the two-phase enqueuing cannot be atomic, the queue can be in a transitory state, where slots have been reserved but have not been written yet.
-This issue is mitigated using a spin loop in dequeuing method.
-If the spin loop fails, the transitory state is saved and spin loop will be retried at the next dequeue.
+As the two-phase enqueuing cannot be atomic, the queue can be in a transitory state, where slots have been reserved but have not been written yet. In this rare case, dequeuing will fail and have to be retried.
 
-# Performance
+Also, `SynchronizedQueue` is a higher level interface that provides blocking and asynchronous methods.
+
+## Unsafe
+
+This library uses unsafe code, for three reasons:
+- buffers are wrapped in `UnsafeCell` to allow mutable for the dequeued buffer;
+- buffers implementation may use unsafe to allow insertion with shared reference;
+- `Buffer` trait require unsafe interface for its invariant, because it's public.
+
+To ensure the safety of the algorithm, it uses:
+- tests (mostly doctests for now, but it needs to be completed)
+- benchmarks
+- MIRI (with tests)
+
+Loom is partially integrated for now, but loom tests are on the TODO list.
+
+## Performance
 
 swap-buffer-queue is very performant – it's actually the fastest MPSC queue I know.
 
