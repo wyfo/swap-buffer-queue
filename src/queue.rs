@@ -571,7 +571,7 @@ where
         // SAFETY: Compare-and-swap makes indexes not overlap, and the buffer is cleared before
         // reusing it for enqueuing (see `Queue::release`).
         unsafe { value.insert_into(buffer, buffer.capacity() - enqueuing.remaining_capacity()) };
-        self.buffers_length[enqueuing.buffer_index()].fetch_add(1, Ordering::AcqRel);
+        self.buffers_length[enqueuing.buffer_index()].fetch_add(value_size, Ordering::AcqRel);
         // Notify dequeuer.
         self.notify.notify_dequeue();
         Ok(())

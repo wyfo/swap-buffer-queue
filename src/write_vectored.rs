@@ -13,13 +13,16 @@
 //! let queue: Queue<WriteVectoredVecBuffer<Vec<u8>>> = Queue::with_capacity(100);
 //! queue.try_enqueue(vec![0; 256]).unwrap();
 //! queue.try_enqueue(vec![42; 42]).unwrap();
-//! let mut slice = queue.try_dequeue().unwrap();
 //! // Adds a header with the total size of the slices
+//! let mut slice = queue.try_dequeue().unwrap();
 //! let total_size = (slice.total_size() as u16).to_be_bytes();
 //! let mut frame = slice.frame(.., Some(&total_size), None);
 //! // Let's pretend we have a writer
 //! let mut writer: Vec<u8> = Default::default();
 //! assert_eq!(writer.write_vectored(&mut frame).unwrap(), 300);
+//! // In this example, because `total_size` header has a shorter lifetime than `slice`,
+//! // `slice` must be dropped before `total_size`.
+//! drop(slice);
 //! ```
 
 use std::{
@@ -53,6 +56,8 @@ pub(crate) static EMPTY_SLICE: &[u8] = &[];
 /// # use swap_buffer_queue::write_vectored::{VectoredSlice, WriteVectoredVecBuffer};
 /// # let queue: Queue<WriteVectoredVecBuffer<_>> = Queue::with_capacity(42);
 /// # queue.try_enqueue(vec![2, 3, 4, 5]).unwrap();
+/// let header = vec![0, 1];
+/// let trailer = vec![6, 7, 8, 9];
 /// let mut slice: BufferSlice<WriteVectoredVecBuffer<Vec<u8>>, _> /* = ... */;
 /// # slice = queue.try_dequeue().unwrap();
 /// fn to_vec<'a, 'b: 'a>(slices: &'a [IoSlice<'b>]) -> Vec<&'a [u8]> {
@@ -60,8 +65,6 @@ pub(crate) static EMPTY_SLICE: &[u8] = &[];
 /// }
 /// assert_eq!(to_vec(slice.deref().deref()), vec![&[2u8, 3, 4, 5]]);
 /// assert_eq!(slice.total_size(), 4);
-/// let header = vec![0, 1];
-/// let trailer = vec![6, 7, 8, 9];
 /// let frame = slice.frame(.., Some(&header), Some(&trailer));
 /// assert_eq!(
 ///     to_vec(frame.deref()),
