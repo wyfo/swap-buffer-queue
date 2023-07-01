@@ -100,6 +100,9 @@ let mut frame = slice.frame(.., &total_size, None);
 // Let's pretend we have a writer
 let mut writer: Vec<u8> = Default::default();
 assert_eq!(writer.write_vectored(&mut frame).unwrap(), 300);
+// In this example, because `total_size` header has a shorter lifetime than `slice`,
+// `slice` must be dropped before `total_size`.
+drop(slice);
 ```
 
 ## How it works 
