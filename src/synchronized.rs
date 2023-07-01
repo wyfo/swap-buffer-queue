@@ -53,18 +53,20 @@ impl WaiterList {
         true
     }
 
-    fn wake_all(&self) {
-        if self.non_empty.load(Ordering::Relaxed)
+    #[inline]
+    fn should_wake(&self) -> bool {
+        self.non_empty.load(Ordering::Relaxed)
             && self
                 .non_empty
                 .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
-        {
-            for waiter in self.waiters.lock().unwrap().drain(..) {
-                match waiter {
-                    Waiter::Async(waker) => waker.wake(),
-                    Waiter::Sync(thread) => thread.unpark(),
-                }
+    }
+
+    fn wake_all(&self) {
+        for waiter in self.waiters.lock().unwrap().drain(..) {
+            match waiter {
+                Waiter::Async(waker) => waker.wake(),
+                Waiter::Sync(thread) => thread.unpark(),
             }
         }
     }
@@ -80,12 +82,16 @@ pub struct SynchronizedNotifier {
 impl Notify for SynchronizedNotifier {
     #[inline]
     fn notify_dequeue(&self) {
-        self.dequeuers.wake_all();
+        if self.dequeuers.should_wake() {
+            self.dequeuers.wake_all();
+        }
     }
 
     #[inline]
     fn notify_enqueue(&self) {
-        self.enqueuers.wake_all();
+        if self.enqueuers.should_wake() {
+            self.enqueuers.wake_all();
+        }
     }
 }
 
