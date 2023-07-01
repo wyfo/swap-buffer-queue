@@ -19,7 +19,7 @@ pub(crate) fn init_array<T, const N: usize>(default: impl Fn() -> T) -> [T; N] {
 
 /// A hack for const-expression-sized array, as discussed here:
 /// https://users.rust-lang.org/t/is-slice-from-raw-parts-unsound-in-case-of-a-repr-c-struct-with-consecutive-arrays/88368
-#[allow(dead_code)]
+#[repr(C)]
 pub(crate) struct ArrayWithHeaderAndTrailer<
     T,
     const HEADER_SIZE: usize,

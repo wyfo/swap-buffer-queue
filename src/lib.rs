@@ -1,6 +1,8 @@
-#![deny(clippy::dbg_macro)]
-#![deny(clippy::semicolon_if_nothing_returned)]
-#![deny(missing_docs)]
+#![forbid(clippy::dbg_macro)]
+#![forbid(clippy::semicolon_if_nothing_returned)]
+#![forbid(missing_docs)]
+#![forbid(unsafe_op_in_unsafe_fn)]
+#![forbid(clippy::undocumented_unsafe_blocks)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 //! # swap-buffer-queue
@@ -58,4 +60,4 @@ pub use synchronized::SynchronizedNotifier;
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 /// [`Queue`] with [`SynchronizedNotifier`]
-pub type SynchronizedQueue<B> = Queue<B, synchronized::SynchronizedNotifier>;
+pub type SynchronizedQueue<B> = Queue<B, SynchronizedNotifier>;

@@ -9,6 +9,8 @@ pub trait Notify {
 }
 
 impl Notify for () {
+    #[inline]
     fn notify_dequeue(&self) {}
+    #[inline]
     fn notify_enqueue(&self) {}
 }

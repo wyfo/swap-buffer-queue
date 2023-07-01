@@ -78,10 +78,12 @@ pub struct SynchronizedNotifier {
 }
 
 impl Notify for SynchronizedNotifier {
+    #[inline]
     fn notify_dequeue(&self) {
         self.dequeuers.wake_all();
     }
 
+    #[inline]
     fn notify_enqueue(&self) {
         self.enqueuers.wake_all();
     }

@@ -70,18 +70,21 @@ pub struct BytesSlice<'a, const HEADER_SIZE: usize = 0, const TRAILER_SIZE: usiz
 impl<'a, const HEADER_SIZE: usize, const TRAILER_SIZE: usize>
     BytesSlice<'a, HEADER_SIZE, TRAILER_SIZE>
 {
+    #[inline]
     pub(crate) fn new(slice: &'a mut [u8]) -> Self {
         Self(slice)
     }
 
     /// Returns a mutable reference on the header part of the slice
     /// (see [examples](BytesSlice#examples)).
+    #[inline]
     pub fn header(&mut self) -> &mut [u8] {
         &mut self.0[..HEADER_SIZE]
     }
 
     /// Returns a mutable reference on the trailer part of the slice
     /// (see [examples](BytesSlice#examples)).
+    #[inline]
     pub fn trailer(&mut self) -> &mut [u8] {
         let len = self.0.len();
         &mut self.0[len - TRAILER_SIZE..]
@@ -89,12 +92,14 @@ impl<'a, const HEADER_SIZE: usize, const TRAILER_SIZE: usize>
 
     /// Returns the complete frame slice, with header and trailer
     /// (see [examples](BytesSlice#examples)).
+    #[inline]
     pub fn frame(&self) -> &[u8] {
         self.0
     }
 
     /// Returns the complete mutable frame slice, with header and trailer
     /// (see [examples](BytesSlice#examples)).
+    #[inline]
     pub fn frame_mut(&mut self) -> &mut [u8] {
         self.0
     }
@@ -105,6 +110,7 @@ impl<const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Deref
 {
     type Target = [u8];
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.0[HEADER_SIZE..self.0.len() - TRAILER_SIZE]
     }
@@ -113,6 +119,7 @@ impl<const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Deref
 impl<const HEADER_SIZE: usize, const TRAILER_SIZE: usize> DerefMut
     for BytesSlice<'_, HEADER_SIZE, TRAILER_SIZE>
 {
+    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         let len = self.0.len();
         &mut self.0[HEADER_SIZE..len - TRAILER_SIZE]
@@ -128,9 +135,11 @@ pub trait WriteBytesSlice {
 }
 
 impl WriteBytesSlice for &[u8] {
+    #[inline]
     fn size(&self) -> usize {
         self.len()
     }
+    #[inline]
     fn write(self, slice: &mut [u8]) {
         slice.copy_from_slice(self.as_ref());
     }
@@ -140,9 +149,11 @@ impl<F> WriteBytesSlice for (usize, F)
 where
     F: FnOnce(&mut [u8]),
 {
+    #[inline]
     fn size(&self) -> usize {
         self.0
     }
+    #[inline]
     fn write(self, slice: &mut [u8]) {
         self.1(slice);
     }

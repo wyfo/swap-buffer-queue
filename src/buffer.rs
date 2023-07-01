@@ -3,22 +3,15 @@
 use core::marker::PhantomData;
 use std::{
     borrow::Borrow,
-    cell::UnsafeCell,
     fmt,
     iter::FusedIterator,
     mem,
     mem::ManuallyDrop,
     ops::{Deref, DerefMut, Range},
-    panic::{RefUnwindSafe, UnwindSafe},
     ptr,
 };
 
-use crossbeam_utils::CachePadded;
-
-use crate::{
-    loom::atomic::{AtomicUsize, Ordering},
-    queue::Queue,
-};
+use crate::queue::Queue;
 
 mod array;
 #[cfg(feature = "std")]
@@ -32,8 +25,8 @@ pub use vec::VecBuffer;
 /// [`Queue`] buffer. It is used together with [`BufferValue`].
 ///
 /// # Safety
-/// [`Buffer::clear`] *clears* the inserted range (see [`BufferValue::insert_into`]),
-/// meaning new values can be inserted.
+/// [`Buffer::clear`] *clears* the inserted range from the buffer
+/// (see [`BufferValue::insert_into`]), meaning new values can be inserted.
 pub unsafe trait Buffer: Default {
     /// The slice type returned by [`slice`](Buffer::slice) method.
     type Slice<'a>
@@ -82,8 +75,8 @@ pub trait Resize: Buffer {
 /// [`Buffer`] whose values can be drained from.
 ///
 /// # Safety
-/// Calling [`Drain::remove`] decreased the inserted range (see [`BufferValue::insert_into`])
-/// by the size of the removed value.
+/// Calling [`Drain::remove`] remove the inserted range `index..index+value.size()`
+/// (see [`BufferValue::insert_into`])
 pub unsafe trait Drain: Buffer {
     /// Value to be removed from the buffer
     type Value;
@@ -93,92 +86,6 @@ pub unsafe trait Drain: Buffer {
     /// A value **must** have been inserted at this index (see [`BufferValue::insert_into`])
     /// before calling this method.
     unsafe fn remove(&mut self, index: usize) -> (Self::Value, usize);
-}
-
-#[derive(Default)]
-pub(crate) struct BufferWithLen<B>
-where
-    B: Buffer,
-{
-    buffer: UnsafeCell<B>,
-    len: CachePadded<AtomicUsize>,
-    #[cfg(debug_assertions)]
-    removed: AtomicUsize,
-}
-
-unsafe impl<B> Send for BufferWithLen<B> where B: Buffer {}
-unsafe impl<B> Sync for BufferWithLen<B> where B: Buffer {}
-impl<B> UnwindSafe for BufferWithLen<B> where B: Buffer {}
-impl<B> RefUnwindSafe for BufferWithLen<B> where B: Buffer {}
-
-impl<B> BufferWithLen<B>
-where
-    B: Buffer,
-{
-    pub(crate) fn capacity(&self) -> usize {
-        unsafe { &*self.buffer.get() }.capacity()
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.len.load(Ordering::Acquire)
-    }
-
-    pub(crate) unsafe fn insert<T>(&self, index: usize, value: T)
-    where
-        T: BufferValue<B>,
-    {
-        let size = value.size();
-        value.insert_into(&*self.buffer.get(), index);
-        self.len.fetch_add(size, Ordering::AcqRel);
-    }
-
-    pub(crate) unsafe fn slice(&self, range: Range<usize>) -> B::Slice<'_> {
-        #[cfg(debug_assertions)]
-        debug_assert_eq!(range, self.removed.load(Ordering::Relaxed)..self.len());
-        (*self.buffer.get()).slice(range)
-    }
-
-    pub(crate) unsafe fn clear(&self, range: Range<usize>) {
-        #[cfg(debug_assertions)]
-        debug_assert_eq!(range, self.removed.load(Ordering::Relaxed)..self.len());
-        (*self.buffer.get()).clear(range);
-        self.len.store(0, Ordering::Release);
-        #[cfg(debug_assertions)]
-        self.removed.store(0, Ordering::Relaxed);
-    }
-}
-
-impl<B> BufferWithLen<B>
-where
-    B: Buffer + Resize,
-{
-    pub(crate) fn with_capacity(capacity: usize) -> Self {
-        let mut buf = Self::default();
-        if capacity > 0 {
-            buf.buffer.get_mut().resize(capacity);
-        }
-        buf
-    }
-
-    pub(crate) unsafe fn resize(&self, capacity: usize) {
-        debug_assert_eq!(self.len(), 0);
-        if capacity != self.capacity() {
-            (*self.buffer.get()).resize(capacity);
-        }
-    }
-}
-
-impl<B> BufferWithLen<B>
-where
-    B: Buffer + Drain,
-{
-    pub(crate) unsafe fn remove(&self, index: usize) -> (B::Value, usize) {
-        #[cfg(debug_assertions)]
-        debug_assert_eq!(index, self.removed.load(Ordering::Relaxed));
-        #[cfg(debug_assertions)]
-        debug_assert!(self.removed.fetch_add(1, Ordering::Relaxed) <= self.len());
-        (*self.buffer.get()).remove(index)
-    }
 }
 
 /// [`Buffer`] slice returned by [`Queue::try_dequeue`] (see [`Buffer::Slice`]).
@@ -213,6 +120,7 @@ impl<'a, B, N> BufferSlice<'a, B, N>
 where
     B: Buffer,
 {
+    #[inline]
     pub(crate) fn new(
         queue: &'a Queue<B, N>,
         buffer_index: usize,
@@ -246,6 +154,7 @@ where
     /// let slice = queue.try_dequeue().unwrap();
     /// assert_eq!(slice.deref(), &[0, 1]);
     /// ```
+    #[inline]
     pub fn requeue(self) {
         self.queue.requeue(self.buffer_index, self.range.clone());
         mem::forget(self);
@@ -268,6 +177,7 @@ where
 {
     type Target = B::Slice<'a>;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.slice
     }
@@ -277,6 +187,7 @@ impl<'a, B, N> DerefMut for BufferSlice<'a, B, N>
 where
     B: Buffer,
 {
+    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.slice
     }
@@ -286,6 +197,7 @@ impl<'a, B, N> Drop for BufferSlice<'a, B, N>
 where
     B: Buffer,
 {
+    #[inline]
     fn drop(&mut self) {
         self.queue.release(self.buffer_index, self.range.clone());
     }
@@ -298,6 +210,7 @@ where
     type Item = B::Value;
     type IntoIter = BufferIter<&'a Queue<B, N>, B, N>;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         let slice = ManuallyDrop::new(self);
         BufferIter {
@@ -367,6 +280,7 @@ where
     /// assert_eq!(iter.next(), Some(1));
     /// assert_eq!(iter.next(), None);
     /// ```
+    #[inline]
     pub fn with_owned<O>(self, queue: O) -> BufferIter<O, B, N>
     where
         O: Borrow<Queue<B, N>>,
@@ -397,6 +311,7 @@ where
     Q: Borrow<Queue<B, N>>,
     B: Buffer,
 {
+    #[inline]
     fn drop(&mut self) {
         self.queue
             .borrow()
@@ -411,6 +326,7 @@ where
 {
     type Item = B::Value;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.range.is_empty() {
             return None;
@@ -424,6 +340,7 @@ where
         Some(value)
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.range.size_hint()
     }
