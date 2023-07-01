@@ -27,7 +27,7 @@ unsafe impl<T, const N: usize> Buffer for ArrayBuffer<T, N> {
 
     #[inline]
     unsafe fn slice(&mut self, range: Range<usize>) -> Self::Slice<'_> {
-        // SAFETY: [UnsafeCell<MaybeUninit<T>>] has the same layout as [T]
+        // SAFETY: [Cell<MaybeUninit<T>>] has the same layout as [T]
         // and function contract guarantees that the range is initialized
         unsafe { &mut *(&mut self.0[range] as *mut _ as *mut [T]) }
     }
