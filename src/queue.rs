@@ -13,7 +13,7 @@ use crate::{
     error::{TryDequeueError, TryEnqueueError},
     loom::{
         atomic::{AtomicUsize, Ordering},
-        Backoff,
+        BACKOFF_LIMIT, SPIN_LIMIT,
     },
     notify::Notify,
 };
@@ -390,7 +390,7 @@ where
         // Swap buffers: previous dequeuing buffer become the enqueuing one
         let next_capa = next_buffer_mut.capacity();
         let next_enqueuing = EnqueuingCapacity::new(next_buffer_index, next_capa - inserted_length);
-        let backoff = Backoff::new();
+        let mut backoff = 0;
         while let Err(enq) = self.enqueuing_capacity.compare_exchange_weak(
             enqueuing.into_atomic(),
             next_enqueuing.with_closed(enqueuing).into_atomic(),
@@ -400,7 +400,12 @@ where
             enqueuing = EnqueuingCapacity::from_atomic(enq);
             // Spin in case of concurrent modifications, except when the buffer is full ofc.
             if enqueuing.remaining_capacity() != 0 {
-                backoff.spin();
+                for _ in 0..1 << backoff {
+                    std::hint::spin_loop();
+                }
+                if backoff < BACKOFF_LIMIT {
+                    backoff += 1;
+                }
             }
         }
         // Update the queue capacity if needed.
@@ -440,8 +445,7 @@ where
         buffer_index: usize,
         length: NonZeroUsize,
     ) -> Option<BufferSlice<B, N>> {
-        let backoff = Backoff::new();
-        loop {
+        for _ in 0..SPIN_LIMIT {
             // Buffers having been swapped, no more enqueuing can happen, we still need to wait
             // for ongoing one. They will be finished when the buffer length (updated after
             // enqueuing) is equal to the expected one.
@@ -458,17 +462,14 @@ where
                 let slice = unsafe { buffer_mut.slice(range.clone()) };
                 return Some(BufferSlice::new(self, buffer_index, range, slice));
             }
-            // If the enqueuing are still ongoing, just save the dequeuing state in order to retry.
-            if backoff.is_completed() {
-                self.dequeuing_length.store(
-                    DequeuingLength::new(buffer_index, length.get()).into_atomic(),
-                    Ordering::Relaxed,
-                );
-                return None;
-            } else {
-                backoff.snooze();
-            }
+            std::hint::spin_loop();
         }
+        // If the enqueuing are still ongoing, just save the dequeuing state in order to retry.
+        self.dequeuing_length.store(
+            DequeuingLength::new(buffer_index, length.get()).into_atomic(),
+            Ordering::Relaxed,
+        );
+        None
     }
 
     pub(crate) fn release(&self, buffer_index: usize, range: Range<usize>) {
@@ -534,8 +535,7 @@ where
         let value_size = value.size();
         let mut enqueuing =
             EnqueuingCapacity::from_atomic(self.enqueuing_capacity.load(Ordering::Acquire));
-        let backoff = Backoff::new();
-        let mut spin = false;
+        let mut backoff = None;
         loop {
             // Check if the queue is not closed and try to reserve a slice of the buffer.
             if enqueuing.is_closed() {
@@ -544,8 +544,13 @@ where
             let Some(next_enq) = enqueuing.try_reserve(value_size) else {
                 return Err(TryEnqueueError::InsufficientCapacity(value));
             };
-            if spin {
-                backoff.spin();
+            if let Some(ref mut backoff) = backoff {
+                for _ in 0..1 << *backoff {
+                    std::hint::spin_loop();
+                }
+                if *backoff < BACKOFF_LIMIT {
+                    *backoff += 1;
+                }
             }
             match self.enqueuing_capacity.compare_exchange_weak(
                 enqueuing.into_atomic(),
@@ -558,7 +563,8 @@ where
                     enqueuing = EnqueuingCapacity::from_atomic(enq);
                     // Spin in case of concurrent modification, except when the buffer index has
                     // modified, which may mean conflict was due to dequeuing.
-                    spin = next_enq.buffer_index() == enqueuing.buffer_index();
+                    backoff = (next_enq.buffer_index() == enqueuing.buffer_index())
+                        .then(|| backoff.unwrap_or(0));
                 }
             }
         }

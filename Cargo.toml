@@ -21,7 +21,7 @@ repository = "https://github.com/wyfo/swap-buffer-queue"
 [features]
 default = ["futures"]
 futures = ["std", "dep:futures"]
-std = ["crossbeam-utils/std"]
+std = []
 write = []
 
 [dependencies]

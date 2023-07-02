@@ -7,14 +7,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossbeam_utils::{Backoff, CachePadded};
+use crossbeam_utils::CachePadded;
 
 use crate::{
     buffer::{Buffer, BufferSlice, BufferValue, Drain},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
     loom::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Mutex, SPIN_LIMIT,
     },
     notify::Notify,
     Queue,
@@ -470,18 +470,14 @@ where
     B: Buffer,
     T: BufferValue<B>,
 {
-    let backoff = Backoff::new();
-    loop {
+    for _ in 0..SPIN_LIMIT {
         match queue.try_enqueue(value) {
             Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= queue.capacity() => {
                 value = v;
             }
             res => return Ok(res),
         };
-        if backoff.is_completed() {
-            break;
-        }
-        backoff.snooze();
+        std::hint::spin_loop();
     }
     queue.notify().enqueuers.register(cx);
     match queue.try_enqueue(value) {
@@ -497,16 +493,12 @@ fn try_dequeue<'a, B>(
 where
     B: Buffer,
 {
-    let backoff = Backoff::new();
-    loop {
+    for _ in 0..SPIN_LIMIT {
         match queue.try_dequeue() {
             Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
             res => return Some(res),
         }
-        if backoff.is_completed() {
-            break;
-        }
-        backoff.snooze();
+        std::hint::spin_loop();
     }
     queue.notify().dequeuers.register(cx);
     match queue.try_dequeue() {
