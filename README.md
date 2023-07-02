@@ -139,11 +139,11 @@ Here is the crossbeam benchmark [forked](https://github.com/wyfo/crossbeam/tree/
 
 | benchmark     | crossbeam | swap-buffer-queue |
 |---------------|-----------|-------------------|
-| bounded1_mpsc | 1.545s    | 1.341s            |
-| bounded1_spsc | 1.652s    | 1.138s            |
-| bounded_mpsc  | 0.362s    | 0.178s            |
-| bounded_seq   | 0.190s    | 0.156s            |
-| bounded_spsc  | 0.115s    | 0.139s            |
+| bounded1_mpsc | 1.545s    | 1.763s            |
+| bounded1_spsc | 1.652s    | 1.000s            |
+| bounded_mpsc  | 0.362s    | 0.137s            |
+| bounded_seq   | 0.190s    | 0.114s            |
+| bounded_spsc  | 0.115s    | 0.092s            |
 
 However, a large enough capacity is required to reach maximum performance; otherwise, high contention scenario may be penalized.
 This is because the algorithm put all the contention on a single atomic integer (instead of two for crossbeam).
