@@ -472,7 +472,7 @@ where
 {
     for _ in 0..SPIN_LIMIT {
         match queue.try_enqueue(value) {
-            Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= queue.capacity() => {
+            Err(TryEnqueueError::InsufficientCapacity(v)) if v.size().get() <= queue.capacity() => {
                 value = v;
             }
             res => return Ok(res),
@@ -481,7 +481,9 @@ where
     }
     queue.notify().enqueuers.register(cx);
     match queue.try_enqueue(value) {
-        Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= queue.capacity() => Err(v),
+        Err(TryEnqueueError::InsufficientCapacity(v)) if v.size().get() <= queue.capacity() => {
+            Err(v)
+        }
         res => Ok(res),
     }
 }

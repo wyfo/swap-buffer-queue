@@ -1,4 +1,4 @@
-use std::{cell::Cell, mem::MaybeUninit, ops::Range};
+use std::{cell::Cell, mem::MaybeUninit, num::NonZeroUsize, ops::Range};
 
 use crate::buffer::{Buffer, BufferValue, Drain, Resize};
 
@@ -41,12 +41,12 @@ unsafe impl<T> Buffer for VecBuffer<T> {
 // SAFETY: `T::insert_into` does initialize the index in the buffer
 unsafe impl<T> BufferValue<VecBuffer<T>> for T {
     #[inline]
-    fn size(&self) -> usize {
-        1
+    fn size(&self) -> NonZeroUsize {
+        NonZeroUsize::new(1).unwrap()
     }
 
     #[inline]
-    unsafe fn insert_into(self, buffer: &VecBuffer<T>, index: usize) {
+    unsafe fn insert_into(self, buffer: &VecBuffer<T>, index: usize, _size: NonZeroUsize) {
         buffer.0[index].set(MaybeUninit::new(self));
     }
 }
