@@ -72,7 +72,7 @@ impl<const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Resize
         let full_capacity = HEADER_SIZE + capacity + TRAILER_SIZE;
         // SAFETY: [Cell<u8>] has the same layout as [u8]
         self.0 = unsafe {
-            Box::from_raw(Box::into_raw(vec![0u8; full_capacity].into()) as *mut [u8] as *mut _)
+            Box::from_raw(Box::into_raw(vec![0u8; full_capacity].into_boxed_slice()) as *mut _)
         };
     }
 }
