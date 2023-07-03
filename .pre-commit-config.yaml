@@ -14,7 +14,7 @@ repos:
         types_or: [rust, toml]
       - id: clippy
         name: clippy
-        entry: cargo clippy --tests -- -D warnings
+        entry: cargo clippy --no-default-features -- -D warnings
         language: rust
         pass_filenames: false
         types_or: [rust, toml]

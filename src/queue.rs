@@ -347,7 +347,7 @@ where
     }
 
     #[allow(clippy::type_complexity)]
-    const NO_RESIZE: Option<Box<dyn FnOnce(&mut B) -> (bool, usize)>> = None;
+    const NO_RESIZE: Option<fn(&mut B) -> (bool, usize)> = None;
 
     #[inline]
     fn try_dequeue_internal(

@@ -17,7 +17,7 @@ jobs:
           override: true
           components: rustfmt, clippy, miri
       - run: cargo +nightly fmt --check
-      - run: cargo clippy
-      - run: cargo clippy --all-features
+      - run: cargo clippy --no-default-features -- -D warnings
+      - run: cargo clippy --all-features --tests -- -D warnings
       - run: cargo test --all-features
       - run: cargo +nightly miri test --all-features
