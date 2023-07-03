@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, UnsafeCell},
+    num::NonZeroUsize,
     ops::Range,
 };
 
@@ -45,19 +46,21 @@ where
     T: WriteBytesSlice,
 {
     #[inline]
-    fn size(&self) -> usize {
+    fn size(&self) -> NonZeroUsize {
         WriteBytesSlice::size(self)
     }
 
     #[inline]
-    unsafe fn insert_into(self, buffer: &WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>, index: usize) {
-        let size = self.size();
+    unsafe fn insert_into(
+        self,
+        buffer: &WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>,
+        index: usize,
+        size: NonZeroUsize,
+    ) {
+        let slice = &buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + size.get()];
         // SAFETY: [Cell<u8>] has the same layout as UnsafeCell<[u8]>
         self.write(unsafe {
-            &mut *UnsafeCell::raw_get(
-                &buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + size] as *const _
-                    as *const UnsafeCell<[u8]>,
-            )
+            &mut *UnsafeCell::raw_get(slice as *const _ as *const UnsafeCell<[u8]>)
         });
     }
 }

@@ -29,7 +29,10 @@
 //! assert_eq!(writer.write(slice.frame()).unwrap(), 300);
 //! ```
 
-use std::ops::{Deref, DerefMut};
+use std::{
+    num::NonZeroUsize,
+    ops::{Deref, DerefMut},
+};
 
 mod array;
 #[cfg(feature = "std")]
@@ -129,15 +132,15 @@ impl<const HEADER_SIZE: usize, const TRAILER_SIZE: usize> DerefMut
 /// Bytes slice writer, used by [`WriteArrayBuffer`] and [`WriteVecBuffer`].
 pub trait WriteBytesSlice {
     /// Returns the size of the slice to be written.
-    fn size(&self) -> usize;
+    fn size(&self) -> NonZeroUsize;
     /// Writes the slice.
     fn write(self, slice: &mut [u8]);
 }
 
 impl WriteBytesSlice for &[u8] {
     #[inline]
-    fn size(&self) -> usize {
-        self.len()
+    fn size(&self) -> NonZeroUsize {
+        NonZeroUsize::new(self.len()).expect("empty slice")
     }
     #[inline]
     fn write(self, slice: &mut [u8]) {
@@ -150,7 +153,21 @@ where
     F: FnOnce(&mut [u8]),
 {
     #[inline]
-    fn size(&self) -> usize {
+    fn size(&self) -> NonZeroUsize {
+        NonZeroUsize::new(self.0).expect("size must not be zero")
+    }
+    #[inline]
+    fn write(self, slice: &mut [u8]) {
+        self.1(slice);
+    }
+}
+
+impl<F> WriteBytesSlice for (NonZeroUsize, F)
+where
+    F: FnOnce(&mut [u8]),
+{
+    #[inline]
+    fn size(&self) -> NonZeroUsize {
         self.0
     }
     #[inline]

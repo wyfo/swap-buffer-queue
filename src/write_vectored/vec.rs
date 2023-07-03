@@ -1,4 +1,4 @@
-use std::{cell::Cell, io::IoSlice, mem, mem::MaybeUninit, ops::Range};
+use std::{cell::Cell, io::IoSlice, mem, mem::MaybeUninit, num::NonZeroUsize, ops::Range};
 
 use crate::{
     buffer::{Buffer, BufferValue, Drain, Resize},
@@ -66,12 +66,17 @@ where
     T: AsRef<[u8]>,
 {
     #[inline]
-    fn size(&self) -> usize {
-        1
+    fn size(&self) -> NonZeroUsize {
+        NonZeroUsize::new(1).unwrap()
     }
 
     #[inline]
-    unsafe fn insert_into(self, buffer: &WriteVectoredVecBuffer<T>, index: usize) {
+    unsafe fn insert_into(
+        self,
+        buffer: &WriteVectoredVecBuffer<T>,
+        index: usize,
+        _size: NonZeroUsize,
+    ) {
         // SAFETY: slice is never read with static lifetime, it will only be used as a reference
         // with the same lifetime than the slice owner
         let slice = unsafe { mem::transmute(IoSlice::new(self.as_ref())) };

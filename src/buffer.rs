@@ -7,6 +7,7 @@ use std::{
     iter::FusedIterator,
     mem,
     mem::ManuallyDrop,
+    num::NonZeroUsize,
     ops::{Deref, DerefMut, Range},
     ptr,
 };
@@ -57,13 +58,14 @@ pub unsafe trait Buffer: Default {
 /// [`BufferValue::insert_into`] (see [`Buffer::slice`]/[`Buffer::clear`])
 pub unsafe trait BufferValue<B: Buffer> {
     /// Returns the size taken by a value in the buffer.
-    fn size(&self) -> usize;
+    fn size(&self) -> NonZeroUsize;
     /// Inserts the value into the buffer at the given index.
     ///
     /// # Safety
-    /// For every call to this method, the inserted range `index..index+value.size()` **must not**
+    /// For every call to this method, the inserted range `index..index+size` **must not**
     /// overlap with a previously inserted one.
-    unsafe fn insert_into(self, buffer: &B, index: usize);
+    /// `size` must be equal to `self.size()`
+    unsafe fn insert_into(self, buffer: &B, index: usize, size: NonZeroUsize);
 }
 
 /// Resizable [`Buffer`].

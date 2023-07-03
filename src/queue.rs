@@ -56,8 +56,8 @@ impl EnqueuingCapacity {
     }
 
     #[inline]
-    fn try_reserve(self, size: usize) -> Option<Self> {
-        self.0.checked_sub(size << 1).map(Self)
+    fn try_reserve(self, size: NonZeroUsize) -> Option<Self> {
+        self.0.checked_sub(size.get() << 1).map(Self)
     }
 
     #[inline]
@@ -574,10 +574,11 @@ where
         // in the buffer length (see `BufferWithLength::insert`), buffer cannot be dequeued and can
         // thus be accessed immutably (see `Queue::try_dequeue_spin`).
         let buffer = unsafe { &*self.buffers[enqueuing.buffer_index()].get() };
+        let index = buffer.capacity() - enqueuing.remaining_capacity();
         // SAFETY: Compare-and-swap makes indexes not overlap, and the buffer is cleared before
         // reusing it for enqueuing (see `Queue::release`).
-        unsafe { value.insert_into(buffer, buffer.capacity() - enqueuing.remaining_capacity()) };
-        self.buffers_length[enqueuing.buffer_index()].fetch_add(value_size, Ordering::AcqRel);
+        unsafe { value.insert_into(buffer, index, value_size) };
+        self.buffers_length[enqueuing.buffer_index()].fetch_add(value_size.get(), Ordering::AcqRel);
         // Notify dequeuer.
         self.notify.notify_dequeue();
         Ok(())
@@ -778,14 +779,14 @@ where
                 if let Some(insert) = insert {
                     for value in insert {
                         let value_size = value.size();
-                        if value_size > buffer_mut.capacity() {
+                        if value_size.get() > buffer_mut.capacity() {
                             break;
                         }
                         // SAFETY: Ranges `length..length+value.size()` will obviously not overlap,
                         // and the buffer is cleared before reusing it for enqueuing
                         // (see `Queue::release`)
-                        unsafe { value.insert_into(buffer_mut, length) };
-                        length += value_size;
+                        unsafe { value.insert_into(buffer_mut, length, value_size) };
+                        length += value_size.get();
                     }
                 }
                 (resized_capa.is_some(), length)

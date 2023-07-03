@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, UnsafeCell},
+    num::NonZeroUsize,
     ops::Range,
 };
 
@@ -49,7 +50,7 @@ unsafe impl<T, const N: usize, const HEADER_SIZE: usize, const TRAILER_SIZE: usi
 where
     T: WriteBytesSlice,
 {
-    fn size(&self) -> usize {
+    fn size(&self) -> NonZeroUsize {
         WriteBytesSlice::size(self)
     }
 
@@ -57,14 +58,12 @@ where
         self,
         buffer: &WriteArrayBuffer<N, HEADER_SIZE, TRAILER_SIZE>,
         index: usize,
+        size: NonZeroUsize,
     ) {
-        let size = self.size();
+        let slice = &buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + size.get()];
         // SAFETY: [Cell<u8>] has the same layout as UnsafeCell<[u8]>
         self.write(unsafe {
-            &mut *UnsafeCell::raw_get(
-                &buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + size] as *const _
-                    as *const UnsafeCell<[u8]>,
-            )
+            &mut *UnsafeCell::raw_get(slice as *const _ as *const UnsafeCell<[u8]>)
         });
     }
 }
