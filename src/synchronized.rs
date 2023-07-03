@@ -1,7 +1,7 @@
 use std::{
     future::poll_fn,
-    iter,
-    task::{Context, Poll, Waker},
+    iter, task,
+    task::{Context, Poll},
     thread,
     thread::Thread,
     time::{Duration, Instant},
@@ -21,36 +21,28 @@ use crate::{
 };
 
 #[derive(Debug)]
-enum Waiter {
-    Async(Waker),
+enum Waker {
+    Async(task::Waker),
     Sync(Thread),
 }
 
 #[derive(Debug, Default)]
-struct WaiterList {
-    waiters: Mutex<Vec<Waiter>>,
+struct WakerList {
+    wakers: Mutex<Vec<Waker>>,
     non_empty: CachePadded<AtomicBool>,
 }
 
-impl WaiterList {
+impl WakerList {
     fn register(&self, cx: Option<&Context>) {
-        let mut waiters = self.waiters.lock().unwrap();
-        if waiters.is_empty() {
+        let waker = match cx {
+            Some(cx) => Waker::Async(cx.waker().clone()),
+            None => Waker::Sync(thread::current()),
+        };
+        let mut wakers = self.wakers.lock().unwrap();
+        if wakers.is_empty() {
             self.non_empty.store(true, Ordering::SeqCst);
         }
-        waiters.push(match cx {
-            Some(cx) => Waiter::Async(cx.waker().clone()),
-            None => Waiter::Sync(thread::current()),
-        });
-    }
-
-    fn wait_until(&self, deadline: Option<Instant>) -> bool {
-        match deadline.map(|d| d.checked_duration_since(Instant::now())) {
-            Some(Some(timeout)) => thread::park_timeout(timeout),
-            Some(None) => return false,
-            None => thread::park(),
-        }
-        true
+        wakers.push(waker);
     }
 
     #[inline]
@@ -63,10 +55,10 @@ impl WaiterList {
     }
 
     fn wake_all(&self) {
-        for waiter in self.waiters.lock().unwrap().drain(..) {
-            match waiter {
-                Waiter::Async(waker) => waker.wake(),
-                Waiter::Sync(thread) => thread.unpark(),
+        for waker in self.wakers.lock().unwrap().drain(..) {
+            match waker {
+                Waker::Async(waker) => waker.wake(),
+                Waker::Sync(thread) => thread.unpark(),
             }
         }
     }
@@ -75,8 +67,8 @@ impl WaiterList {
 /// Synchronized (a)synchronous [`Notify`] implementation.
 #[derive(Debug, Default)]
 pub struct SynchronizedNotifier {
-    enqueuers: WaiterList,
-    dequeuers: WaiterList,
+    enqueuers: WakerList,
+    dequeuers: WakerList,
 }
 
 impl Notify for SynchronizedNotifier {
@@ -112,7 +104,7 @@ where
                 Ok(res) => return res,
                 Err(v) => value = v,
             };
-            if !self.notify().enqueuers.wait_until(deadline) {
+            if wait_until(deadline) {
                 return self.try_enqueue(value);
             }
         }
@@ -258,7 +250,7 @@ where
             if let Some(res) = try_dequeue(self, None) {
                 return res;
             }
-            if !self.notify().enqueuers.wait_until(deadline) {
+            if wait_until(deadline) {
                 return self.try_dequeue();
             }
         }
@@ -515,4 +507,13 @@ fn dequeue_err(error: TryDequeueError) -> DequeueError {
         TryDequeueError::Conflict => DequeueError::Conflict,
         _ => unreachable!(),
     }
+}
+
+fn wait_until(deadline: Option<Instant>) -> bool {
+    match deadline.map(|d| d.checked_duration_since(Instant::now())) {
+        Some(Some(timeout)) => thread::park_timeout(timeout),
+        Some(None) => return true,
+        None => thread::park(),
+    }
+    false
 }
