@@ -117,6 +117,16 @@ As the two-phase enqueuing cannot be atomic, the queue can be in a transitory st
 
 Also, `SynchronizedQueue` is a higher level interface that provides blocking and asynchronous methods.
 
+## Fairness
+
+`SynchronizedQueue` implementation is not fair, i.e. it doesn't ensure that the oldest blocked enqueuer will succeed when the capacity becomes available.
+
+However, this issue is quite mitigated by the fact that all the capacity becomes available at once, so all blocked enqueuers may succeed (especially with one-sized values).
+
+For the particular case of potential big variable-sized values, it's still possible to combine the queue with a semaphore, e.g. `tokio::sync::Semaphore`. Performance will be impacted, but the algorithm is [fast enough](#performance) to afford it.
+
+I'm still thinking about a way to include fairness directly in the algorithm, but it's not an easy thing to do.
+
 ## Unsafe
 
 This library uses unsafe code, for three reasons:
