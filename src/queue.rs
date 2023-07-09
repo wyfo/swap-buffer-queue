@@ -1,10 +1,4 @@
-use std::{
-    cell::UnsafeCell,
-    fmt,
-    num::NonZeroUsize,
-    ops::Range,
-    panic::{RefUnwindSafe, UnwindSafe},
-};
+use std::{cell::UnsafeCell, fmt, num::NonZeroUsize, ops::Range};
 
 use crossbeam_utils::CachePadded;
 
@@ -161,18 +155,6 @@ unsafe impl<B, N> Sync for Queue<B, N>
 where
     B: Buffer,
     N: Sync,
-{
-}
-impl<B, N> UnwindSafe for Queue<B, N>
-where
-    B: Buffer,
-    N: UnwindSafe,
-{
-}
-impl<B, N> RefUnwindSafe for Queue<B, N>
-where
-    B: Buffer,
-    N: RefUnwindSafe,
 {
 }
 
