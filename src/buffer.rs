@@ -5,7 +5,6 @@ use std::{
     borrow::Borrow,
     fmt,
     iter::FusedIterator,
-    mem,
     mem::ManuallyDrop,
     num::NonZeroUsize,
     ops::{Deref, DerefMut, Range},
@@ -158,8 +157,8 @@ where
     /// ```
     #[inline]
     pub fn requeue(self) {
-        self.queue.requeue(self.buffer_index, self.range.clone());
-        mem::forget(self);
+        let slice = ManuallyDrop::new(self);
+        slice.queue.requeue(slice.buffer_index, slice.range.clone());
     }
 }
 
