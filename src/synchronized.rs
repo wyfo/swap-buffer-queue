@@ -1,12 +1,15 @@
+use core::fmt::Formatter;
 use std::{
+    fmt,
     future::poll_fn,
     iter, task,
-    task::{Context, Poll},
+    task::Poll,
     thread,
     thread::Thread,
     time::{Duration, Instant},
 };
 
+use atomic_waker::AtomicWaker;
 use crossbeam_utils::CachePadded;
 
 use crate::{
@@ -20,10 +23,28 @@ use crate::{
     Queue,
 };
 
+mod atomic_waker;
+
 #[derive(Debug)]
-enum Waker {
+pub(crate) enum Waker {
     Async(task::Waker),
     Sync(Thread),
+}
+
+impl Waker {
+    fn new(cx: Option<&task::Context>) -> Self {
+        match cx {
+            Some(cx) => Self::Async(cx.waker().clone()),
+            None => Self::Sync(thread::current()),
+        }
+    }
+
+    fn wake(self) {
+        match self {
+            Self::Async(waker) => waker.wake(),
+            Self::Sync(thread) => thread.unpark(),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -33,11 +54,7 @@ struct WakerList {
 }
 
 impl WakerList {
-    fn register(&self, cx: Option<&Context>) {
-        let waker = match cx {
-            Some(cx) => Waker::Async(cx.waker().clone()),
-            None => Waker::Sync(thread::current()),
-        };
+    fn register(&self, waker: Waker) {
         let mut wakers = self.wakers.lock().unwrap();
         if wakers.is_empty() {
             self.non_empty.store(true, Ordering::SeqCst);
@@ -65,18 +82,22 @@ impl WakerList {
 }
 
 /// Synchronized (a)synchronous [`Notify`] implementation.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct SynchronizedNotifier {
     enqueuers: WakerList,
-    dequeuers: WakerList,
+    dequeuer: AtomicWaker,
+}
+
+impl fmt::Debug for SynchronizedNotifier {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SynchronizedNotifier").finish()
+    }
 }
 
 impl Notify for SynchronizedNotifier {
     #[inline]
     fn notify_dequeue(&self) {
-        if self.dequeuers.should_wake() {
-            self.dequeuers.wake_all();
-        }
+        self.dequeuer.wake();
     }
 
     #[inline]
@@ -456,7 +477,7 @@ where
 fn try_enqueue<B, T>(
     queue: &Queue<B, SynchronizedNotifier>,
     mut value: T,
-    cx: Option<&Context>,
+    cx: Option<&task::Context>,
 ) -> Result<Result<(), TryEnqueueError<T>>, T>
 where
     B: Buffer,
@@ -471,7 +492,7 @@ where
         };
         std::hint::spin_loop();
     }
-    queue.notify().enqueuers.register(cx);
+    queue.notify().enqueuers.register(Waker::new(cx));
     match queue.try_enqueue(value) {
         Err(TryEnqueueError::InsufficientCapacity(v)) if v.size().get() <= queue.capacity() => {
             Err(v)
@@ -482,7 +503,7 @@ where
 
 fn try_dequeue<'a, B>(
     queue: &'a Queue<B, SynchronizedNotifier>,
-    cx: Option<&Context>,
+    cx: Option<&task::Context>,
 ) -> Option<Result<BufferSlice<'a, B, SynchronizedNotifier>, TryDequeueError>>
 where
     B: Buffer,
@@ -494,7 +515,7 @@ where
         }
         std::hint::spin_loop();
     }
-    queue.notify().dequeuers.register(cx);
+    queue.notify().dequeuer.register(cx);
     match queue.try_dequeue() {
         Err(TryDequeueError::Empty | TryDequeueError::Pending) => None,
         res => Some(res),
