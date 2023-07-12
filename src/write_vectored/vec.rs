@@ -2,7 +2,7 @@ use std::{cell::Cell, io::IoSlice, mem, mem::MaybeUninit, num::NonZeroUsize, ops
 
 use crate::{
     buffer::{Buffer, BufferValue, Drain, Resize},
-    loom::atomic::{AtomicUsize, Ordering},
+    loom::sync::atomic::{AtomicUsize, Ordering},
     write_vectored::{VectoredSlice, EMPTY_SLICE},
 };
 

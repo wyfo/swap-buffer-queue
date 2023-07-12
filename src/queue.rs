@@ -1,4 +1,4 @@
-use std::{cell::UnsafeCell, fmt, num::NonZeroUsize, ops::Range};
+use std::{fmt, num::NonZeroUsize, ops::Range};
 
 use crossbeam_utils::CachePadded;
 
@@ -6,8 +6,8 @@ use crate::{
     buffer::{Buffer, BufferSlice, BufferValue, Drain, Resize},
     error::{TryDequeueError, TryEnqueueError},
     loom::{
-        atomic::{AtomicUsize, Ordering},
-        BACKOFF_LIMIT, SPIN_LIMIT,
+        sync::atomic::{AtomicUsize, Ordering},
+        LoomUnsafeCell, BACKOFF_LIMIT, SPIN_LIMIT,
     },
     notify::Notify,
 };
@@ -135,7 +135,7 @@ where
 {
     enqueuing_capacity: CachePadded<AtomicUsize>,
     dequeuing_length: CachePadded<AtomicUsize>,
-    buffers: [UnsafeCell<B>; 2],
+    buffers: [LoomUnsafeCell<B>; 2],
     buffers_length: [CachePadded<AtomicUsize>; 2],
     capacity: AtomicUsize,
     notify: N,
@@ -174,8 +174,10 @@ where
     /// let queue: Queue<VecBuffer<usize>> = Queue::new();
     /// ```
     pub fn new() -> Self {
-        let mut buffers: [UnsafeCell<B>; 2] = Default::default();
-        let capacity = buffers[0].get_mut().capacity();
+        let buffers: [LoomUnsafeCell<B>; 2] = Default::default();
+        // https://github.com/tokio-rs/loom/issues/277#issuecomment-1633262296
+        // SAFETY: exclusive reference to `buffers`
+        let capacity = buffers[0].with_mut(|buf| unsafe { &*buf }.capacity());
         EnqueuingCapacity::check_overflow(capacity);
         Self {
             enqueuing_capacity: AtomicUsize::new(EnqueuingCapacity::new(0, capacity).into_atomic())
@@ -204,9 +206,12 @@ where
     /// ```
     pub fn with_capacity(capacity: usize) -> Self {
         EnqueuingCapacity::check_overflow(capacity);
-        let mut buffers: [UnsafeCell<B>; 2] = Default::default();
-        buffers[0].get_mut().resize(capacity);
-        buffers[1].get_mut().resize(capacity);
+        let buffers: [LoomUnsafeCell<B>; 2] = Default::default();
+        // https://github.com/tokio-rs/loom/issues/277#issuecomment-1633262296
+        // SAFETY: exclusive reference to `buffers`
+        buffers[0].with_mut(|buf| unsafe { &mut *buf }.resize(capacity));
+        // SAFETY: exclusive reference to `buffers`
+        buffers[1].with_mut(|buf| unsafe { &mut *buf }.resize(capacity));
         Self {
             enqueuing_capacity: AtomicUsize::new(EnqueuingCapacity::new(0, capacity).into_atomic())
                 .into(),
@@ -347,20 +352,25 @@ where
                 .ok_or(TryDequeueError::Pending);
         }
         let next_buffer_index = dequeuing.buffer_index();
-        // SAFETY: Dequeuing buffer can be accessed mutably
-        let next_buffer_mut = unsafe { &mut *self.buffers[next_buffer_index].get() };
-        // Resize buffer if needed.
-        let (resized, inserted_length) = resize.map_or((false, 0), |f| f(next_buffer_mut));
+        let (resized, inserted_length, next_capa) =
+            self.buffers[next_buffer_index].with_mut(|next_buf| {
+                // SAFETY: Dequeuing buffer can be accessed mutably
+                let next_buffer = unsafe { &mut *next_buf };
+                // Resize buffer if needed.
+                let (resized, inserted_length) = resize.map_or((false, 0), |f| f(next_buffer));
+                (resized, inserted_length, next_buffer.capacity())
+            });
         if inserted_length > 0 {
             self.buffers_length[next_buffer_index].fetch_add(inserted_length, Ordering::Relaxed);
         }
         let mut enqueuing =
             EnqueuingCapacity::from_atomic(self.enqueuing_capacity.load(Ordering::Acquire));
         debug_assert_ne!(dequeuing.buffer_index(), enqueuing.buffer_index());
-        // SAFETY: Enqueuing buffer can be immutably accessed.
-        let buffer = unsafe { &*self.buffers[enqueuing.buffer_index()].get() };
+        let capacity =
+            // SAFETY: Enqueuing buffer can be immutably accessed.
+            self.buffers[enqueuing.buffer_index()].with(|buf| unsafe { &*buf }.capacity());
         // If buffer is empty and has not be resized, return an error (and store back dequeuing)
-        if enqueuing.remaining_capacity() == buffer.capacity() && !resized && inserted_length == 0 {
+        if enqueuing.remaining_capacity() == capacity && !resized && inserted_length == 0 {
             self.dequeuing_length
                 .store(dequeuing.into_atomic(), Ordering::Relaxed);
             return Err(if enqueuing.is_closed() {
@@ -370,7 +380,6 @@ where
             });
         }
         // Swap buffers: previous dequeuing buffer become the enqueuing one
-        let next_capa = next_buffer_mut.capacity();
         let next_enqueuing = EnqueuingCapacity::new(next_buffer_index, next_capa - inserted_length);
         let mut backoff = 0;
         while let Err(enq) = self.enqueuing_capacity.compare_exchange_weak(
@@ -396,7 +405,7 @@ where
         }
         // Notify enqueuers.
         notify_enqueue();
-        match NonZeroUsize::new(buffer.capacity() - enqueuing.remaining_capacity()) {
+        match NonZeroUsize::new(capacity - enqueuing.remaining_capacity()) {
             // Try to wait ongoing insertions and take ownership of the buffer, then return the
             // buffer slice
             Some(len) => self
@@ -435,13 +444,13 @@ where
             // than the effective buffer length.
             let buffer_len = self.buffers_length[buffer_index].load(Ordering::Acquire);
             if buffer_len >= length.get() {
-                // SAFETY: All enqueuings are done, and buffers having been swapped, this buffer
-                // can now be accessed mutably.
-                let buffer_mut = unsafe { &mut *self.buffers[buffer_index].get() };
                 // Returns the slice (range can be shortened by draining + requeuing).
                 let range = buffer_len - length.get()..buffer_len;
-                // SAFETY: All enqueuing are done, range has been inserted.
-                let slice = unsafe { buffer_mut.slice(range.clone()) };
+                let slice = self.buffers[buffer_index]
+                    // SAFETY: All enqueuings are done, and buffers having been swapped, this buffer
+                    // can now be accessed mutably.
+                    // SAFETY: All enqueuing are done, range has been inserted.
+                    .with_mut(|buf| unsafe { (*buf).slice(range.clone()) });
                 return Some(BufferSlice::new(self, buffer_index, range, slice));
             }
             std::hint::spin_loop();
@@ -458,9 +467,8 @@ where
         // Clears the dequeuing buffer and its length, and release the dequeuing "lock".
         // SAFETY: Dequeued buffer pointed by buffer index can be accessed mutably
         // (see `Queue::try_dequeue_spin`).
-        let buffer_mut = unsafe { &mut *self.buffers[buffer_index].get() };
         // SAFETY: Range comes from the dequeued slice, so it has been previously inserted.
-        unsafe { buffer_mut.clear(range) };
+        self.buffers[buffer_index].with_mut(|buf| unsafe { (*buf).clear(range) });
         self.buffers_length[buffer_index].store(0, Ordering::Release);
         self.dequeuing_length.store(
             DequeuingLength::new(buffer_index, 0).into_atomic(),
@@ -552,14 +560,16 @@ where
         }
         // Insert the value into the buffer at the index given by subtracting the remaining
         // capacity to the buffer one.
-        // SAFETY: As long as enqueuing is ongoing, i.e. a reserved slice has not been acknowledged
-        // in the buffer length (see `BufferWithLength::insert`), buffer cannot be dequeued and can
-        // thus be accessed immutably (see `Queue::try_dequeue_spin`).
-        let buffer = unsafe { &*self.buffers[enqueuing.buffer_index()].get() };
-        let index = buffer.capacity() - enqueuing.remaining_capacity();
-        // SAFETY: Compare-and-swap makes indexes not overlap, and the buffer is cleared before
-        // reusing it for enqueuing (see `Queue::release`).
-        unsafe { value.insert_into(buffer, index, value_size) };
+        self.buffers[enqueuing.buffer_index()].with(|buf| {
+            // SAFETY: As long as enqueuing is ongoing, i.e. a reserved slice has not been acknowledged
+            // in the buffer length (see `BufferWithLength::insert`), buffer cannot be dequeued and can
+            // thus be accessed immutably (see `Queue::try_dequeue_spin`).
+            let buffer = unsafe { &*buf };
+            let index = buffer.capacity() - enqueuing.remaining_capacity();
+            // SAFETY: Compare-and-swap makes indexes not overlap, and the buffer is cleared before
+            // reusing it for enqueuing (see `Queue::release`).
+            unsafe { value.insert_into(buffer, index, value_size) };
+        });
         self.buffers_length[enqueuing.buffer_index()].fetch_add(value_size.get(), Ordering::AcqRel);
         // Notify dequeuer.
         self.notify.notify_dequeue();
@@ -788,10 +798,9 @@ where
         );
         // SAFETY: Dequeued buffer pointed by buffer index can be accessed mutably
         // (see `Queue::try_dequeue_spin`).
-        let buffer_mut = unsafe { &mut *self.buffers[buffer_index].get() };
         // SAFETY: Index comes from an iterator on the dequeued slice, so it has
-        // been previously inserted.
-        unsafe { buffer_mut.remove(index) }
+        // been previously inserted, and can be removed.
+        self.buffers[buffer_index].with_mut(|buf| unsafe { (*buf).remove(index) })
     }
 }
 

@@ -5,81 +5,21 @@ use std::{
     iter, task,
     task::Poll,
     thread,
-    thread::Thread,
     time::{Duration, Instant},
 };
-
-use atomic_waker::AtomicWaker;
-use crossbeam_utils::CachePadded;
 
 use crate::{
     buffer::{Buffer, BufferSlice, BufferValue, Drain},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
-    loom::{
-        atomic::{AtomicBool, Ordering},
-        Mutex, SPIN_LIMIT,
-    },
+    loom::SPIN_LIMIT,
     notify::Notify,
+    synchronized::{atomic_waker::AtomicWaker, waker_list::WakerList},
     Queue,
 };
 
 mod atomic_waker;
-
-#[derive(Debug)]
-pub(crate) enum Waker {
-    Async(task::Waker),
-    Sync(Thread),
-}
-
-impl Waker {
-    fn new(cx: Option<&task::Context>) -> Self {
-        match cx {
-            Some(cx) => Self::Async(cx.waker().clone()),
-            None => Self::Sync(thread::current()),
-        }
-    }
-
-    fn wake(self) {
-        match self {
-            Self::Async(waker) => waker.wake(),
-            Self::Sync(thread) => thread.unpark(),
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct WakerList {
-    wakers: Mutex<Vec<Waker>>,
-    non_empty: CachePadded<AtomicBool>,
-}
-
-impl WakerList {
-    fn register(&self, waker: Waker) {
-        let mut wakers = self.wakers.lock().unwrap();
-        if wakers.is_empty() {
-            self.non_empty.store(true, Ordering::SeqCst);
-        }
-        wakers.push(waker);
-    }
-
-    #[inline]
-    fn should_wake(&self) -> bool {
-        self.non_empty.load(Ordering::Relaxed)
-            && self
-                .non_empty
-                .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-    }
-
-    fn wake_all(&self) {
-        for waker in self.wakers.lock().unwrap().drain(..) {
-            match waker {
-                Waker::Async(waker) => waker.wake(),
-                Waker::Sync(thread) => thread.unpark(),
-            }
-        }
-    }
-}
+mod waker;
+mod waker_list;
 
 /// Synchronized (a)synchronous [`Notify`] implementation.
 #[derive(Default)]
@@ -102,9 +42,7 @@ impl Notify for SynchronizedNotifier {
 
     #[inline]
     fn notify_enqueue(&self) {
-        if self.enqueuers.should_wake() {
-            self.enqueuers.wake_all();
-        }
+        self.enqueuers.wake();
     }
 }
 
@@ -492,7 +430,7 @@ where
         };
         std::hint::spin_loop();
     }
-    queue.notify().enqueuers.register(Waker::new(cx));
+    queue.notify().enqueuers.register(cx);
     match queue.try_enqueue(value) {
         Err(TryEnqueueError::InsufficientCapacity(v)) if v.size().get() <= queue.capacity() => {
             Err(v)

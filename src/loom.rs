@@ -1,19 +1,35 @@
 #[cfg(not(all(loom, test)))]
-pub(crate) use std::sync::atomic;
+mod without_loom {
+    pub(crate) use std::{cell, sync};
+
+    pub(crate) const SPIN_LIMIT: usize = 64;
+    pub(crate) const BACKOFF_LIMIT: usize = 6;
+
+    #[derive(Debug, Default)]
+    pub(crate) struct LoomUnsafeCell<T>(cell::UnsafeCell<T>);
+
+    impl<T> LoomUnsafeCell<T> {
+        pub(crate) fn with<R>(&self, f: impl FnOnce(*const T) -> R) -> R {
+            f(self.0.get())
+        }
+
+        pub(crate) fn with_mut<R>(&self, f: impl FnOnce(*mut T) -> R) -> R {
+            f(self.0.get())
+        }
+    }
+}
+
 #[cfg(not(all(loom, test)))]
-#[cfg(feature = "std")]
-pub(crate) use std::sync::Mutex;
-#[cfg(not(all(loom, test)))]
-pub(crate) const SPIN_LIMIT: usize = 64;
-#[cfg(not(all(loom, test)))]
-pub(crate) const BACKOFF_LIMIT: usize = 6;
+pub(crate) use without_loom::*;
 
 #[cfg(all(loom, test))]
-pub(crate) use loom::sync::atomic;
+mod with_loom {
+    pub(crate) use loom::{cell, sync};
+
+    pub(crate) const SPIN_LIMIT: usize = 1;
+    pub(crate) const BACKOFF_LIMIT: usize = 1;
+    pub(crate) use cell::UnsafeCell as LoomUnsafeCell;
+}
+
 #[cfg(all(loom, test))]
-#[cfg(feature = "std")]
-pub(crate) use loom::sync::Mutex;
-#[cfg(all(loom, test))]
-pub(crate) const SPIN_LIMIT: usize = 1;
-#[cfg(all(loom, test))]
-pub(crate) const BACKOFF_LIMIT: usize = 1;
+pub(crate) use with_loom::*;

@@ -1,8 +1,11 @@
-use std::{cell::Cell, mem::MaybeUninit, task, thread};
+use std::{mem::MaybeUninit, task, thread};
 
 use crate::{
-    loom::atomic::{AtomicU8, Ordering},
-    synchronized::Waker,
+    loom::{
+        cell::Cell,
+        sync::atomic::{AtomicU8, Ordering},
+    },
+    synchronized::waker::Waker,
 };
 
 const EMPTY: u8 = 0b001;
@@ -10,7 +13,7 @@ const REGISTERING: u8 = 0b001;
 const REGISTERED: u8 = 0b010;
 const WAKING_FLAG: u8 = 0b100;
 
-pub(crate) struct AtomicWaker {
+pub(super) struct AtomicWaker {
     waker: Cell<MaybeUninit<Waker>>,
     state: AtomicU8,
 }
@@ -34,7 +37,7 @@ unsafe impl Sync for AtomicWaker {}
 
 impl AtomicWaker {
     #[inline]
-    pub(crate) fn register(&self, cx: Option<&task::Context>) {
+    pub(super) fn register(&self, cx: Option<&task::Context>) {
         let mut state = self.state.load(Ordering::Relaxed);
         loop {
             if state != EMPTY && state != REGISTERED {
@@ -74,7 +77,7 @@ impl AtomicWaker {
     }
 
     #[inline]
-    pub(crate) fn wake(&self) {
+    pub(super) fn wake(&self) {
         let mut state = self.state.load(Ordering::Relaxed);
         loop {
             if state != REGISTERING && state != REGISTERED {
