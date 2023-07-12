@@ -1,9 +1,10 @@
-use std::{mem::MaybeUninit, task, thread};
+use std::{mem::MaybeUninit, task};
 
 use crate::{
     loom::{
         cell::Cell,
         sync::atomic::{AtomicU8, Ordering},
+        thread,
     },
     synchronized::waker::Waker,
 };

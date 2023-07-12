@@ -4,14 +4,13 @@ use std::{
     future::poll_fn,
     iter, task,
     task::Poll,
-    thread,
     time::{Duration, Instant},
 };
 
 use crate::{
     buffer::{Buffer, BufferSlice, BufferValue, Drain},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
-    loom::SPIN_LIMIT,
+    loom::{thread, SPIN_LIMIT},
     notify::Notify,
     synchronized::{atomic_waker::AtomicWaker, waker_list::WakerList},
     Queue,

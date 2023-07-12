@@ -1,4 +1,6 @@
-use std::{task, thread};
+use std::task;
+
+use crate::loom::thread;
 
 #[derive(Debug)]
 pub(super) enum Waker {
