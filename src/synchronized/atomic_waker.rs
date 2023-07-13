@@ -9,7 +9,7 @@ use crate::{
     synchronized::waker::Waker,
 };
 
-const EMPTY: u8 = 0b001;
+const EMPTY: u8 = 0b000;
 const REGISTERING: u8 = 0b001;
 const REGISTERED: u8 = 0b010;
 const WAKING_FLAG: u8 = 0b100;
