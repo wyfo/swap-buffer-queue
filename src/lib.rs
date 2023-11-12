@@ -15,6 +15,9 @@
 //!
 //! The crate is *no_std* (some buffer implementations may require `std`).
 //!
+//! In addition to the low level `Queue` implementation, a higher level `SynchronizedQueue` is
+//! provided with both blocking and asynchronous methods.
+//!
 //! # Examples
 //!
 //! ```rust
@@ -38,7 +41,6 @@
 //! assert_eq!(slice.into_iter().collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
 //! ```
 
-extern crate alloc;
 #[cfg(not(feature = "std"))]
 extern crate core as std;
 

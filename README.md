@@ -15,6 +15,8 @@ It is especially well suited for IO writing workflow, see [buffer implementation
 
 The crate is *no_std* (some buffer implementations may require `std`).
 
+In addition to the low level `Queue` implementation, a higher level `SynchronizedQueue` is provided with both blocking and asynchronous methods.
+
 
 ## Example
 
@@ -108,8 +110,6 @@ When [`Queue::try_enqueue`](https://docs.rs/swap-buffer-queue/latest/swap_buffer
 When [`Queue::try_dequeue`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/struct.Queue.html#method.try_dequeue) is called, both buffers are swapped atomically, so dequeued buffer will contain previously enqueued values, and new enqueued ones will go to the other (empty) buffer. 
 
 As the two-phase enqueuing cannot be atomic, the queue can be in a transitory state, where slots have been reserved but have not been written yet. In this rare case, dequeuing will fail and have to be retried.
-
-Also, `SynchronizedQueue` is a higher level interface that provides blocking and asynchronous methods.
 
 ## Fairness
 
