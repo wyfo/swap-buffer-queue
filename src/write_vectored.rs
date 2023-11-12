@@ -12,16 +12,14 @@
 //! let queue: Queue<WriteVectoredVecBuffer<Vec<u8>>> = Queue::with_capacity(100);
 //! queue.try_enqueue([vec![0; 256]]).unwrap();
 //! queue.try_enqueue([vec![42; 42]]).unwrap();
-//! // Adds a header with the total size of the slices
+//! let mut total_size = 0u16.to_be_bytes();
 //! let mut slice = queue.try_dequeue().unwrap();
-//! let total_size = (slice.total_size() as u16).to_be_bytes();
+//! // Adds a header with the total size of the slices
+//! total_size.copy_from_slice(&(slice.total_size() as u16).to_be_bytes());
 //! let mut frame = slice.frame(.., Some(&total_size), None);
 //! // Let's pretend we have a writer
 //! let mut writer: Vec<u8> = Default::default();
 //! assert_eq!(writer.write_vectored(&mut frame).unwrap(), 300);
-//! // In this example, because `total_size` header has a shorter lifetime than `slice`,
-//! // `slice` must be dropped before `total_size`.
-//! drop(slice);
 //! ```
 
 use std::{

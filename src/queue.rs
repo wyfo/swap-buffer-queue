@@ -622,18 +622,20 @@ where
     /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// queue.try_enqueue([0]).unwrap();
     /// queue.try_enqueue([1]).unwrap();
-    /// let slice = queue.try_dequeue().unwrap();
-    /// assert_eq!(slice.deref(), &[0, 1]);
-    /// // dequeuing cannot be done concurrently (`slice` is still in scope)
-    /// assert_eq!(queue.try_dequeue().unwrap_err(), TryDequeueError::Conflict);
-    /// drop(slice);
+    /// {
+    ///     let slice = queue.try_dequeue().unwrap();
+    ///     assert_eq!(slice.deref(), &[0, 1]);
+    ///     // dequeuing cannot be done concurrently (`slice` is still in scope)
+    ///     assert_eq!(queue.try_dequeue().unwrap_err(), TryDequeueError::Conflict);
+    /// }
     /// // let's close the queue
     /// queue.try_enqueue([2]).unwrap();
     /// queue.close();
     /// // queue can be dequeued while closed when not empty
-    /// let slice = queue.try_dequeue().unwrap();
-    /// assert_eq!(slice.deref(), &[2]);
-    /// drop(slice);
+    /// {
+    ///     let slice = queue.try_dequeue().unwrap();
+    ///     assert_eq!(slice.deref(), &[2]);
+    /// }
     /// assert_eq!(queue.try_dequeue().unwrap_err(), TryDequeueError::Closed)
     /// ```
     pub fn try_dequeue(&self) -> Result<BufferSlice<B, N>, TryDequeueError> {
@@ -699,11 +701,12 @@ where
     ///     Err(TryEnqueueError::InsufficientCapacity([1]))
     /// );
     /// // dequeue and resize, inserting elements before the buffer is available
-    /// let slice = queue
-    ///     .try_dequeue_and_resize(3, Some(|| std::iter::once([42])))
-    ///     .unwrap();
-    /// assert_eq!(slice.deref(), &[0]);
-    /// drop(slice);
+    /// {
+    ///     let slice = queue
+    ///         .try_dequeue_and_resize(3, Some(|| std::iter::once([42])))
+    ///         .unwrap();
+    ///     assert_eq!(slice.deref(), &[0]);
+    /// }
     /// // capacity has been increased
     /// queue.try_enqueue([1]).unwrap();
     /// queue.try_enqueue([2]).unwrap();

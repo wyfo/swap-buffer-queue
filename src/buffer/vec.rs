@@ -59,6 +59,6 @@ unsafe impl<T> Drain for VecBuffer<T> {
     #[inline]
     unsafe fn remove(&mut self, index: usize) -> Self::Value {
         // SAFETY: function contract guarantees that the index has been inserted and is then initialized
-        unsafe { self.0[index].replace(MaybeUninit::uninit()).assume_init() }
+        unsafe { self.0[index].get_mut().assume_init_read() }
     }
 }
