@@ -486,6 +486,14 @@ where
         );
     }
 
+    pub(crate) fn get_slice(&self, buffer_index: usize, range: Range<usize>) -> B::Slice<'_> {
+        self.buffers[buffer_index]
+            // SAFETY: Dequeued buffer pointed by buffer index can be accessed mutably
+            // (see `Queue::try_dequeue_spin`).
+            // SAFETY: Range comes from the dequeued slice, so it has been previously inserted.
+            .with_mut(|buf| unsafe { (*buf).slice(range.clone()) })
+    }
+
     pub(crate) fn requeue(&self, buffer_index: usize, range: Range<usize>) {
         // Requeuing the buffer just means saving the dequeuing state (or release if there is
         // nothing to requeue).
@@ -744,7 +752,10 @@ where
     ///     // lock the overflow and use `try_dequeue_and_resize` to drain the overflow into the
     ///     // queue
     ///     let mut guard = overflow.lock().unwrap();
-    ///     queue.try_dequeue_and_resize(queue.capacity() + guard.len(), Some(guard.drain(..)))
+    ///     let vec = &mut guard;
+    ///     // `{ vec }` is a trick to get the correct FnOnce inference
+    ///     // https://stackoverflow.com/questions/74814588/why-does-rust-infer-fnmut-instead-of-fnonce-for-this-closure-even-though-inferr
+    ///     queue.try_dequeue_and_resize(queue.capacity() + guard.len(), Some(|| { vec }.drain(..)))
     /// }
     ///
     /// // queue is initialized with zero capacity
@@ -763,13 +774,14 @@ where
     ///     &[1, 2]
     /// );
     /// ```
-    pub fn try_dequeue_and_resize<T>(
+    pub fn try_dequeue_and_resize<I>(
         &self,
         capacity: impl Into<Option<usize>>,
-        insert: Option<impl Iterator<Item = T>>,
+        insert: Option<impl FnOnce() -> I>, // insert: Option<I>,
     ) -> Result<BufferSlice<B, N>, TryDequeueError>
     where
-        T: InsertIntoBuffer<B>,
+        I: IntoIterator,
+        I::Item: InsertIntoBuffer<B>,
     {
         self.try_dequeue_internal(
             self.lock_dequeuing()?,
@@ -784,7 +796,7 @@ where
                 }
                 let mut length = 0;
                 if let Some(insert) = insert {
-                    for value in insert {
+                    for value in insert() {
                         let Some(value_size) = NonZeroUsize::new(value.size()) else {
                             continue;
                         };
@@ -808,7 +820,7 @@ impl<B, N> Queue<B, N>
 where
     B: Buffer + Drain,
 {
-    pub(crate) fn remove(&self, buffer_index: usize, index: usize) -> (B::Value, usize) {
+    pub(crate) fn remove(&self, buffer_index: usize, index: usize) -> B::Value {
         debug_assert_eq!(
             self.dequeuing_length.load(Ordering::Relaxed),
             DEQUEUING_LOCKED

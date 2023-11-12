@@ -1,8 +1,8 @@
 use std::{
     fmt,
     future::poll_fn,
-    iter, task,
-    task::Poll,
+    iter,
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
@@ -18,6 +18,9 @@ use crate::{
 mod atomic_waker;
 mod waker;
 mod waker_list;
+
+/// [`Queue`] with [`SynchronizedNotifier`]
+pub type SynchronizedQueue<B> = Queue<B, SynchronizedNotifier>;
 
 /// Synchronized (a)synchronous [`Notify`] implementation.
 #[derive(Default)]
@@ -44,7 +47,7 @@ impl Notify for SynchronizedNotifier {
     }
 }
 
-impl<B> Queue<B, SynchronizedNotifier>
+impl<B> SynchronizedQueue<B>
 where
     B: Buffer,
 {
@@ -347,7 +350,7 @@ where
     }
 }
 
-impl<B> Queue<B, SynchronizedNotifier>
+impl<B> SynchronizedQueue<B>
 where
     B: Buffer + Drain,
 {
@@ -375,7 +378,8 @@ where
             .flatten()
     }
 
-    #[cfg(feature = "futures")]
+    #[cfg(feature = "stream")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "stream")))]
     /// Returns an stream over the element of the queue (see [`BufferIter`](crate::buffer::BufferIter)).
     ///
     /// # Examples
@@ -410,9 +414,9 @@ where
 }
 
 fn try_enqueue<B, T>(
-    queue: &Queue<B, SynchronizedNotifier>,
+    queue: &SynchronizedQueue<B>,
     mut value: T,
-    cx: Option<&task::Context>,
+    cx: Option<&Context>,
 ) -> Result<Result<(), TryEnqueueError<T>>, T>
 where
     B: Buffer,
@@ -435,8 +439,8 @@ where
 }
 
 fn try_dequeue<'a, B>(
-    queue: &'a Queue<B, SynchronizedNotifier>,
-    cx: Option<&task::Context>,
+    queue: &'a SynchronizedQueue<B>,
+    cx: Option<&Context>,
 ) -> Option<Result<BufferSlice<'a, B, SynchronizedNotifier>, TryDequeueError>>
 where
     B: Buffer,

@@ -45,6 +45,9 @@ extern crate core as std;
 pub mod buffer;
 pub mod error;
 mod loom;
+#[cfg(feature = "channel")]
+#[cfg_attr(docsrs, doc(cfg(feature = "channel")))]
+pub mod mpsc;
 pub mod notify;
 mod queue;
 #[cfg(feature = "std")]
@@ -62,8 +65,5 @@ pub mod write_vectored;
 
 pub use queue::Queue;
 #[cfg(feature = "std")]
-pub use synchronized::SynchronizedNotifier;
-#[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-/// [`Queue`] with [`SynchronizedNotifier`]
-pub type SynchronizedQueue<B> = Queue<B, SynchronizedNotifier>;
+pub use synchronized::{SynchronizedNotifier, SynchronizedQueue};

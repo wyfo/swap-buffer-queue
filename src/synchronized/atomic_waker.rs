@@ -101,3 +101,48 @@ impl AtomicWaker {
         self.state.store(EMPTY, Ordering::Release);
     }
 }
+
+#[cfg(all(loom, test))]
+#[cfg(test)]
+mod test {
+    use std::task::Poll;
+
+    use crate::{
+        loom::{
+            sync::{
+                atomic::{AtomicBool, Ordering},
+                Arc,
+            },
+            thread,
+        },
+        synchronized::atomic_waker::AtomicWaker,
+    };
+
+    #[test]
+    fn loom_atomic_waker() {
+        loom::model(|| {
+            println!("======================================");
+            let waker = Arc::new(AtomicWaker::default());
+            let state = Arc::new(AtomicBool::new(false));
+            let waker2 = waker.clone();
+            let state2 = state.clone();
+            let thread = thread::spawn(move || {
+                println!("store");
+                state2.store(true, Ordering::SeqCst);
+                println!("wake");
+                waker2.wake();
+            });
+            println!("register");
+            loom::future::block_on(std::future::poll_fn(|cx| {
+                waker.register(Some(cx));
+                if state.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    println!("pending");
+                    Poll::Pending
+                }
+            }));
+            thread.join().ok();
+        });
+    }
+}
