@@ -141,19 +141,19 @@ where
     notify: N,
 }
 
-// SAFETY: Buffers' `UnsafeCell` accesses are synchronized by the algorithm to
-// respect borrowing rules
+// SAFETY: Buffer access is synchronized by the algorithm, but `Send` is required
+// because it is owned by the queue
 unsafe impl<B, N> Send for Queue<B, N>
 where
-    B: Buffer,
+    B: Buffer + Send,
     N: Send,
 {
 }
-// SAFETY: Buffers' `UnsafeCell` accesses are synchronized by the algorithm to
-// respect borrowing rules
+// SAFETY: Buffer access is synchronized by the algorithm, but `Send` is required
+// because it is owned by the queue
 unsafe impl<B, N> Sync for Queue<B, N>
 where
-    B: Buffer,
+    B: Buffer + Send,
     N: Sync,
 {
 }
@@ -721,6 +721,7 @@ where
     ///     };
     ///     // then push the values to the overflow vector
     ///     guard.push([value]);
+    ///     drop(guard);
     ///     // notify possible waiting dequeue
     ///     queue.notify().notify_dequeue();
     ///     Ok(())
