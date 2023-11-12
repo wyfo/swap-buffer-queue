@@ -1,11 +1,10 @@
 use std::{
     cell::{Cell, UnsafeCell},
-    num::NonZeroUsize,
     ops::Range,
 };
 
 use crate::{
-    buffer::{Buffer, BufferValue, Resize},
+    buffer::{Buffer, InsertIntoBuffer, Resize},
     write::{BytesSlice, WriteBytesSlice},
 };
 
@@ -41,23 +40,19 @@ unsafe impl<const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Buffer
 
 // SAFETY: Buffer values are `Copy` and already initialized
 unsafe impl<T, const HEADER_SIZE: usize, const TRAILER_SIZE: usize>
-    BufferValue<WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>> for T
+    InsertIntoBuffer<WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>> for T
 where
     T: WriteBytesSlice,
 {
     #[inline]
-    fn size(&self) -> NonZeroUsize {
+    fn size(&self) -> usize {
         WriteBytesSlice::size(self)
     }
 
     #[inline]
-    unsafe fn insert_into(
-        self,
-        buffer: &WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>,
-        index: usize,
-        size: NonZeroUsize,
-    ) {
-        let slice = &buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + size.get()];
+    unsafe fn insert_into(self, buffer: &WriteVecBuffer<HEADER_SIZE, TRAILER_SIZE>, index: usize) {
+        let slice =
+            &buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + WriteBytesSlice::size(&self)];
         // SAFETY: [Cell<u8>] has the same layout as UnsafeCell<[u8]>
         self.write(unsafe {
             &mut *UnsafeCell::raw_get(slice as *const _ as *const UnsafeCell<[u8]>)

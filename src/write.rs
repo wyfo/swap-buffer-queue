@@ -8,17 +8,14 @@
 //! # Examples
 //! ```rust
 //! # use std::io::Write;
-//! # use swap_buffer_queue::Queue;
-//! # use swap_buffer_queue::write::{WriteBytesSlice, WriteVecBuffer};
+//! # use swap_buffer_queue::{Queue, write::{WriteBytesSlice, WriteVecBuffer}};
 //! // Creates a WriteVecBuffer queue with a 2-bytes header
 //! let queue: Queue<WriteVecBuffer<2>> = Queue::with_capacity((1 << 16) - 1);
 //! queue
 //!     .try_enqueue((256, |slice: &mut [u8]| { /* write the slice */ }))
-//!     .ok()
 //!     .unwrap();
 //! queue
 //!     .try_enqueue((42, |slice: &mut [u8]| { /* write the slice */ }))
-//!     .ok()
 //!     .unwrap();
 //! let mut slice = queue.try_dequeue().unwrap();
 //! // Adds a header with the len of the buffer
@@ -29,10 +26,7 @@
 //! assert_eq!(writer.write(slice.frame()).unwrap(), 300);
 //! ```
 
-use std::{
-    num::NonZeroUsize,
-    ops::{Deref, DerefMut},
-};
+use std::ops::{Deref, DerefMut};
 
 mod array;
 #[cfg(feature = "std")]
@@ -57,7 +51,7 @@ pub use vec::WriteVecBuffer;
 /// # use swap_buffer_queue::Queue;
 /// # use swap_buffer_queue::write::{BytesSlice, WriteBytesSlice, WriteVecBuffer};
 /// # let queue: Queue<WriteVecBuffer<2, 4>> = Queue::with_capacity(42);
-/// # queue.try_enqueue(&[2u8, 3, 4, 5] as &[_]).ok().unwrap();
+/// # queue.try_enqueue(&[2u8, 3, 4, 5] as &[_]).unwrap();
 /// let mut slice: BufferSlice<WriteVecBuffer<2, 4>, _> /* = ... */;
 /// # slice = queue.try_dequeue().unwrap();
 /// assert_eq!(slice.deref().deref(), &[2, 3, 4, 5]);
@@ -132,15 +126,15 @@ impl<const HEADER_SIZE: usize, const TRAILER_SIZE: usize> DerefMut
 /// Bytes slice writer, used by [`WriteArrayBuffer`] and [`WriteVecBuffer`].
 pub trait WriteBytesSlice {
     /// Returns the size of the slice to be written.
-    fn size(&self) -> NonZeroUsize;
+    fn size(&self) -> usize;
     /// Writes the slice.
     fn write(self, slice: &mut [u8]);
 }
 
 impl WriteBytesSlice for &[u8] {
     #[inline]
-    fn size(&self) -> NonZeroUsize {
-        NonZeroUsize::new(self.len()).expect("empty slice")
+    fn size(&self) -> usize {
+        self.len()
     }
     #[inline]
     fn write(self, slice: &mut [u8]) {
@@ -153,21 +147,7 @@ where
     F: FnOnce(&mut [u8]),
 {
     #[inline]
-    fn size(&self) -> NonZeroUsize {
-        NonZeroUsize::new(self.0).expect("size must not be zero")
-    }
-    #[inline]
-    fn write(self, slice: &mut [u8]) {
-        self.1(slice);
-    }
-}
-
-impl<F> WriteBytesSlice for (NonZeroUsize, F)
-where
-    F: FnOnce(&mut [u8]),
-{
-    #[inline]
-    fn size(&self) -> NonZeroUsize {
+    fn size(&self) -> usize {
         self.0
     }
     #[inline]

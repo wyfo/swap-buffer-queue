@@ -20,18 +20,24 @@ The crate is *no_std* (some buffer implementations may require `std`).
 
 ```rust
 use std::ops::Deref;
-use swap_buffer_queue::{buffer::VecBuffer, Queue};
+use swap_buffer_queue::{buffer::{IntoValueIter, VecBuffer}, Queue};
 
 // Initialize the queue with a capacity
-let queue: Queue<VecBuffer<usize>, usize> = Queue::with_capacity(42);
-// Enqueue some values
-queue.try_enqueue(0).unwrap();
-queue.try_enqueue(1).unwrap();
+let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
+// Enqueue some value
+queue.try_enqueue([0]).unwrap();
+// Multiple values can be enqueued at the same time
+// (optimized compared to multiple enqueuing)
+queue.try_enqueue([1, 2]).unwrap();
+let mut values = vec![3, 4];
+queue
+    .try_enqueue(values.drain(..).into_value_iter())
+    .unwrap();
 // Dequeue a slice to the enqueued values
 let slice = queue.try_dequeue().unwrap();
-assert_eq!(slice.deref(), &[0, 1]);
+assert_eq!(slice.deref(), &[0, 1, 2, 3, 4]);
 // Enqueued values can also be retrieved
-assert_eq!(slice.into_iter().collect::<Vec<_>>(), vec![0, 1]);
+assert_eq!(slice.into_iter().collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
 ```
 
 
@@ -45,35 +51,24 @@ In addition to simple [`ArrayBuffer`](https://docs.rs/swap-buffer-queue/latest/s
 [`WriteVecBuffer`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/write/struct.WriteVecBuffer.html) are well suited when there are objects to be serialized with a known-serialization size. Indeed, objects can then be serialized directly on the queue's buffer, avoiding allocation.
 
 ```rust
-use swap_buffer_queue::Queue;
-use swap_buffer_queue::write::{WriteBytesSlice, WriteVecBuffer};
+use std::io::Write;
+use swap_buffer_queue::{Queue, write::{WriteBytesSlice, WriteVecBuffer}};
 
-// the slice to be written in the queue's buffer (not too complex for the example)
-#[derive(Debug)]
-struct Slice(Vec<u8>);
-impl WriteBytesSlice for Slice {
-    fn size(&self) -> usize {
-        self.0.len()
-    }
-    fn write(&mut self, slice: &mut [u8]) {
-        slice.copy_from_slice(&self.0);
-    }
-}
-//!
 // Creates a WriteVecBuffer queue with a 2-bytes header
-let queue: Queue<WriteVecBuffer<2>, Slice> = Queue::with_capacity((1 << 16) - 1);
-queue.try_enqueue(Slice(vec![0; 256])).unwrap();
-queue.try_enqueue(Slice(vec![42; 42])).unwrap();
+let queue: Queue<WriteVecBuffer<2>> = Queue::with_capacity((1 << 16) - 1);
+queue
+    .try_enqueue((256, |slice: &mut [u8]| { /* write the slice */ }))
+    .unwrap();
+queue
+    .try_enqueue((42, |slice: &mut [u8]| { /* write the slice */ }))
+    .unwrap();
 let mut slice = queue.try_dequeue().unwrap();
 // Adds a header with the len of the buffer
 let len = (slice.len() as u16).to_be_bytes();
 slice.header().copy_from_slice(&len);
 // Let's pretend we have a writer
 let mut writer: Vec<u8> = Default::default();
-assert_eq!(
-    std::io::Write::write(&mut writer, slice.frame()).unwrap(),
-    300
-);
+assert_eq!(writer.write(slice.frame()).unwrap(), 300);
 ```
 
 ### [`write_vectored`](https://docs.rs/swap-buffer-queue/latest/swap_buffer_queue/write/index.html)
@@ -86,13 +81,12 @@ As a convenience, total size of the buffered io-slices can be retrieved.
 
 ```rust
 use std::io::{Write};
-use swap_buffer_queue::{write_vectored::WriteVectoredVecBuffer};
-use swap_buffer_queue::Queue;
+use swap_buffer_queue::{Queue, write_vectored::WriteVectoredVecBuffer};
 
 // Creates a WriteVectoredVecBuffer queue
 let queue: Queue<WriteVectoredVecBuffer<Vec<u8>>, Vec<u8>> = Queue::with_capacity(100);
-queue.try_enqueue(vec![0; 256]).unwrap();
-queue.try_enqueue(vec![42; 42]).unwrap();
+queue.try_enqueue([vec![0; 256]]).unwrap();
+queue.try_enqueue([vec![42; 42]]).unwrap();
 let mut slice = queue.try_dequeue().unwrap();
 // Adds a header with the total size of the slices
 let total_size = (slice.total_size() as u16).to_be_bytes();

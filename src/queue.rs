@@ -3,7 +3,7 @@ use std::{fmt, num::NonZeroUsize, ops::Range};
 use crossbeam_utils::CachePadded;
 
 use crate::{
-    buffer::{Buffer, BufferSlice, BufferValue, Drain, Resize},
+    buffer::{Buffer, BufferSlice, Drain, InsertIntoBuffer, Resize},
     error::{TryDequeueError, TryEnqueueError},
     loom::{
         sync::atomic::{AtomicUsize, Ordering},
@@ -267,7 +267,7 @@ where
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// assert_eq!(queue.len(), 0);
-    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
     /// assert_eq!(queue.len(), 1);
     /// ```
     pub fn len(&self) -> usize {
@@ -501,28 +501,32 @@ where
     /// Enqueuing will fail if the queue has insufficient capacity, or if it is closed. In case of
     /// success, it will notify waiting dequeuing operations using [`Notify::notify_dequeue`].
     ///
+    /// Enqueuing a zero-sized value is a no-op.
+    ///
     /// # Examples
     /// ```
     /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::TryEnqueueError;
     /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(1);
-    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
     /// // queue is full
     /// assert_eq!(
-    ///     queue.try_enqueue(0),
-    ///     Err(TryEnqueueError::InsufficientCapacity(0))
+    ///     queue.try_enqueue([0]),
+    ///     Err(TryEnqueueError::InsufficientCapacity([0]))
     /// );
     /// // let's close the queue
     /// queue.close();
-    /// assert_eq!(queue.try_enqueue(0), Err(TryEnqueueError::Closed(0)));
+    /// assert_eq!(queue.try_enqueue([0]), Err(TryEnqueueError::Closed([0])));
     /// ```
     pub fn try_enqueue<T>(&self, value: T) -> Result<(), TryEnqueueError<T>>
     where
-        T: BufferValue<B>,
+        T: InsertIntoBuffer<B>,
     {
         // Compare-and-swap loop with backoff in order to mitigate contention on the atomic field
-        let value_size = value.size();
+        let Some(value_size) = NonZeroUsize::new(value.size()) else {
+            return Ok(());
+        };
         let mut enqueuing =
             EnqueuingCapacity::from_atomic(self.enqueuing_capacity.load(Ordering::Acquire));
         let mut backoff = None;
@@ -568,7 +572,7 @@ where
             let index = buffer.capacity() - enqueuing.remaining_capacity();
             // SAFETY: Compare-and-swap makes indexes not overlap, and the buffer is cleared before
             // reusing it for enqueuing (see `Queue::release`).
-            unsafe { value.insert_into(buffer, index, value_size) };
+            unsafe { value.insert_into(buffer, index) };
         });
         self.buffers_length[enqueuing.buffer_index()].fetch_add(value_size.get(), Ordering::AcqRel);
         // Notify dequeuer.
@@ -598,15 +602,15 @@ where
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::TryDequeueError;
     /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
-    /// queue.try_enqueue(0).unwrap();
-    /// queue.try_enqueue(1).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
+    /// queue.try_enqueue([1]).unwrap();
     /// let slice = queue.try_dequeue().unwrap();
     /// assert_eq!(slice.deref(), &[0, 1]);
     /// // dequeuing cannot be done concurrently (`slice` is still in scope)
     /// assert_eq!(queue.try_dequeue().unwrap_err(), TryDequeueError::Conflict);
     /// drop(slice);
     /// // let's close the queue
-    /// queue.try_enqueue(2).unwrap();
+    /// queue.try_enqueue([2]).unwrap();
     /// queue.close();
     /// // queue can be dequeued while closed when not empty
     /// let slice = queue.try_dequeue().unwrap();
@@ -634,10 +638,10 @@ where
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::{TryDequeueError, TryEnqueueError};
     /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
-    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
     /// queue.close();
     /// assert!(queue.is_closed());
-    /// assert_eq!(queue.try_enqueue(1), Err(TryEnqueueError::Closed(1)));
+    /// assert_eq!(queue.try_enqueue([1]), Err(TryEnqueueError::Closed([1])));
     /// assert_eq!(queue.try_dequeue().unwrap().deref(), &[0]);
     /// assert_eq!(queue.try_dequeue().unwrap_err(), TryDequeueError::Closed);
     /// ```
@@ -670,21 +674,21 @@ where
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # use swap_buffer_queue::error::TryEnqueueError;
     /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(1);
-    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
     /// // queue is full
     /// assert_eq!(
-    ///     queue.try_enqueue(1),
-    ///     Err(TryEnqueueError::InsufficientCapacity(1))
+    ///     queue.try_enqueue([1]),
+    ///     Err(TryEnqueueError::InsufficientCapacity([1]))
     /// );
     /// // dequeue and resize, inserting elements before the buffer is available
     /// let slice = queue
-    ///     .try_dequeue_and_resize(3, Some(std::iter::once(42)))
+    ///     .try_dequeue_and_resize(3, Some(std::iter::once([42])))
     ///     .unwrap();
     /// assert_eq!(slice.deref(), &[0]);
     /// drop(slice);
     /// // capacity has been increased
-    /// queue.try_enqueue(1).unwrap();
-    /// queue.try_enqueue(2).unwrap();
+    /// queue.try_enqueue([1]).unwrap();
+    /// queue.try_enqueue([2]).unwrap();
     /// let slice = queue.try_dequeue().unwrap();
     /// assert_eq!(slice.deref(), &[42, 1, 2]);
     /// ```
@@ -695,28 +699,28 @@ where
     /// # use std::ops::Deref;
     /// # use std::sync::Mutex;
     /// # use swap_buffer_queue::Queue;
-    /// # use swap_buffer_queue::buffer::{BufferSlice, BufferValue, VecBuffer};
+    /// # use swap_buffer_queue::buffer::{BufferSlice, InsertIntoBuffer, VecBuffer};
     /// # use swap_buffer_queue::error::{EnqueueError, TryDequeueError, TryEnqueueError};
     /// # use swap_buffer_queue::notify::Notify;
-    /// fn enqueue_unbounded<T: BufferValue<VecBuffer<T>>>(
+    /// fn enqueue_unbounded<T>(
     ///     queue: &Queue<VecBuffer<T>>,
-    ///     overflow: &Mutex<Vec<T>>,
+    ///     overflow: &Mutex<Vec<[T; 1]>>,
     ///     mut value: T,
-    /// ) -> Result<(), EnqueueError<T>> {
+    /// ) -> Result<(), EnqueueError<[T; 1]>> {
     ///     // first, try to enqueue normally
-    ///     match queue.try_enqueue(value) {
-    ///         Err(TryEnqueueError::InsufficientCapacity(v)) => value = v,
+    ///     match queue.try_enqueue([value]) {
+    ///         Err(TryEnqueueError::InsufficientCapacity([v])) => value = v,
     ///         res => return res,
     ///     };
     ///     // if the enqueuing fails, lock the overflow
     ///     let mut guard = overflow.lock().unwrap();
     ///     // retry to enqueue (we never know what happened during lock acquisition)
-    ///     match queue.try_enqueue(value) {
-    ///         Err(TryEnqueueError::InsufficientCapacity(v)) => value = v,
+    ///     match queue.try_enqueue([value]) {
+    ///         Err(TryEnqueueError::InsufficientCapacity([v])) => value = v,
     ///         res => return res,
     ///     };
     ///     // then push the values to the overflow vector
-    ///     guard.push(value);
+    ///     guard.push([value]);
     ///     // notify possible waiting dequeue
     ///     queue.notify().notify_dequeue();
     ///     Ok(())
@@ -724,7 +728,7 @@ where
     ///
     /// fn try_dequeue_unbounded<'a, T>(
     ///     queue: &'a Queue<VecBuffer<T>>,
-    ///     overflow: &Mutex<Vec<T>>,
+    ///     overflow: &Mutex<Vec<[T; 1]>>,
     /// ) -> Result<BufferSlice<'a, VecBuffer<T>, ()>, TryDequeueError> {
     ///     // lock the overflow and use `try_dequeue_and_resize` to drain the overflow into the
     ///     // queue
@@ -754,7 +758,7 @@ where
         insert: Option<impl Iterator<Item = T>>,
     ) -> Result<BufferSlice<B, N>, TryDequeueError>
     where
-        T: BufferValue<B>,
+        T: InsertIntoBuffer<B>,
     {
         self.try_dequeue_internal(
             self.lock_dequeuing()?,
@@ -770,14 +774,16 @@ where
                 let mut length = 0;
                 if let Some(insert) = insert {
                     for value in insert {
-                        let value_size = value.size();
+                        let Some(value_size) = NonZeroUsize::new(value.size()) else {
+                            continue;
+                        };
                         if value_size.get() > buffer_mut.capacity() {
                             break;
                         }
                         // SAFETY: Ranges `length..length+value.size()` will obviously not overlap,
                         // and the buffer is cleared before reusing it for enqueuing
                         // (see `Queue::release`)
-                        unsafe { value.insert_into(buffer_mut, length, value_size) };
+                        unsafe { value.insert_into(buffer_mut, length) };
                         length += value_size.get();
                     }
                 }

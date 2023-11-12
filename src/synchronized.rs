@@ -1,4 +1,3 @@
-use core::fmt::Formatter;
 use std::{
     fmt,
     future::poll_fn,
@@ -8,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    buffer::{Buffer, BufferSlice, BufferValue, Drain},
+    buffer::{Buffer, BufferSlice, Drain, InsertIntoBuffer},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
     loom::{thread, SPIN_LIMIT},
     notify::Notify,
@@ -28,7 +27,7 @@ pub struct SynchronizedNotifier {
 }
 
 impl fmt::Debug for SynchronizedNotifier {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SynchronizedNotifier").finish()
     }
 }
@@ -55,7 +54,7 @@ where
         deadline: Option<Instant>,
     ) -> Result<(), TryEnqueueError<T>>
     where
-        T: BufferValue<B>,
+        T: InsertIntoBuffer<B>,
     {
         loop {
             match try_enqueue(self, value, None) {
@@ -84,30 +83,30 @@ where
     /// # use swap_buffer_queue::error::{EnqueueError, TryEnqueueError};
     /// let queue: Arc<SynchronizedQueue<VecBuffer<usize>>> =
     ///     Arc::new(SynchronizedQueue::with_capacity(1));
-    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
     /// assert_eq!(
-    ///     queue.try_enqueue(1),
-    ///     Err(TryEnqueueError::InsufficientCapacity(1))
+    ///     queue.try_enqueue([1]),
+    ///     Err(TryEnqueueError::InsufficientCapacity([1]))
     /// );
     /// // queue is full, let's spawn an enqueuing task and dequeue
     /// let queue_clone = queue.clone();
-    /// let task = std::thread::spawn(move || queue_clone.enqueue(1));
+    /// let task = std::thread::spawn(move || queue_clone.enqueue([1]));
     /// std::thread::sleep(Duration::from_millis(1));
     /// assert_eq!(queue.try_dequeue().unwrap().deref(), &[0]);
     /// // enqueuing task has succeeded
     /// task.join().unwrap().unwrap();
     /// assert_eq!(queue.try_dequeue().unwrap().deref(), &[1]);
     /// // let's close the queue
-    /// queue.try_enqueue(2).unwrap();
+    /// queue.try_enqueue([2]).unwrap();
     /// let queue_clone = queue.clone();
-    /// let task = std::thread::spawn(move || queue_clone.enqueue(3));
+    /// let task = std::thread::spawn(move || queue_clone.enqueue([3]));
     /// std::thread::sleep(Duration::from_millis(1));
     /// queue.close();
-    /// assert_eq!(task.join().unwrap(), Err(EnqueueError::Closed(3)));
+    /// assert_eq!(task.join().unwrap(), Err(EnqueueError::Closed([3])));
     /// ```
     pub fn enqueue<T>(&self, value: T) -> Result<(), EnqueueError<T>>
     where
-        T: BufferValue<B>,
+        T: InsertIntoBuffer<B>,
     {
         self.enqueue_sync(value, None)
     }
@@ -117,7 +116,6 @@ where
     /// This method extends [`try_enqueue`](Queue::try_enqueue) by waiting synchronously (with a
     /// timeout) [`SynchronizedNotifier::notify_enqueue`] call, i.e. when a buffer is dequeued, in case of
     /// insufficient capacity.
-    ///
     ///
     /// # Examples
     /// ```
@@ -129,21 +127,21 @@ where
     /// # use swap_buffer_queue::error::{EnqueueError, TryEnqueueError};
     /// let queue: Arc<SynchronizedQueue<VecBuffer<usize>>> =
     ///     Arc::new(SynchronizedQueue::with_capacity(1));
-    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
     /// assert_eq!(
-    ///     queue.enqueue_timeout(1, Duration::from_millis(1)),
-    ///     Err(TryEnqueueError::InsufficientCapacity(1))
+    ///     queue.enqueue_timeout([1], Duration::from_millis(1)),
+    ///     Err(TryEnqueueError::InsufficientCapacity([1]))
     /// );
     /// let queue_clone = queue.clone();
     /// let task = std::thread::spawn(move || {
     ///     std::thread::sleep(Duration::from_millis(1));
     ///     queue_clone.try_dequeue().unwrap();
     /// });
-    /// queue.enqueue_timeout(1, Duration::from_secs(1)).unwrap();
+    /// queue.enqueue_timeout([1], Duration::from_secs(1)).unwrap();
     /// ```
     pub fn enqueue_timeout<T>(&self, value: T, timeout: Duration) -> Result<(), TryEnqueueError<T>>
     where
-        T: BufferValue<B>,
+        T: InsertIntoBuffer<B>,
     {
         self.enqueue_sync(value, Some(Instant::now() + timeout))
     }
@@ -164,29 +162,29 @@ where
     /// # tokio_test::block_on(async {
     /// let queue: Arc<SynchronizedQueue<VecBuffer<usize>>> =
     ///     Arc::new(SynchronizedQueue::with_capacity(1));
-    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
     /// assert_eq!(
-    ///     queue.try_enqueue(0),
-    ///     Err(TryEnqueueError::InsufficientCapacity(0))
+    ///     queue.try_enqueue([0]),
+    ///     Err(TryEnqueueError::InsufficientCapacity([0]))
     /// );
     /// // queue is full, let's spawn an enqueuing task and dequeue
     /// let queue_clone = queue.clone();
-    /// let task = tokio::spawn(async move { queue_clone.enqueue_async(1).await });
+    /// let task = tokio::spawn(async move { queue_clone.enqueue_async([1]).await });
     /// assert_eq!(queue.try_dequeue().unwrap().deref(), &[0]);
     /// // enqueuing task has succeeded
     /// task.await.unwrap().unwrap();
     /// assert_eq!(queue.try_dequeue().unwrap().deref(), &[1]);
     /// // let's close the queue
-    /// queue.try_enqueue(2).unwrap();
+    /// queue.try_enqueue([2]).unwrap();
     /// let queue_clone = queue.clone();
-    /// let task = tokio::spawn(async move { queue_clone.enqueue_async(3).await });
+    /// let task = tokio::spawn(async move { queue_clone.enqueue_async([3]).await });
     /// queue.close();
-    /// assert_eq!(task.await.unwrap(), Err(EnqueueError::Closed(3)));
+    /// assert_eq!(task.await.unwrap(), Err(EnqueueError::Closed([3])));
     /// # })
     /// ```
     pub async fn enqueue_async<T>(&self, value: T) -> Result<(), EnqueueError<T>>
     where
-        T: BufferValue<B>,
+        T: InsertIntoBuffer<B>,
     {
         let mut value = Some(value);
         poll_fn(|cx| {
@@ -235,7 +233,7 @@ where
     /// let task = std::thread::spawn(move || {
     ///     Ok::<_, DequeueError>(queue_clone.dequeue()?.into_iter().collect::<Vec<_>>())
     /// });
-    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
     /// // dequeuing task has succeeded
     /// assert_eq!(task.join().unwrap().unwrap().deref(), &[0]);
     /// // let's close the queue
@@ -273,7 +271,7 @@ where
     /// let queue_clone = queue.clone();
     /// let task = std::thread::spawn(move || {
     ///     std::thread::sleep(Duration::from_millis(1));
-    ///     queue_clone.try_enqueue(0).unwrap();
+    ///     queue_clone.try_enqueue([0]).unwrap();
     /// });
     /// assert_eq!(
     ///     queue
@@ -318,7 +316,7 @@ where
     ///             .collect::<Vec<_>>(),
     ///     )
     /// });
-    /// queue.try_enqueue(0).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
     /// // dequeuing task has succeeded
     /// assert_eq!(task.await.unwrap().unwrap().deref(), &[0]);
     /// // let's close the queue
@@ -360,8 +358,8 @@ where
     /// # use swap_buffer_queue::SynchronizedQueue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// let queue: SynchronizedQueue<VecBuffer<usize>> = SynchronizedQueue::with_capacity(42);
-    /// queue.try_enqueue(0).unwrap();
-    /// queue.try_enqueue(1).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
+    /// queue.try_enqueue([1]).unwrap();
     ///
     /// let mut iter = queue.iter();
     /// assert_eq!(iter.next(), Some(0));
@@ -387,8 +385,8 @@ where
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # tokio_test::block_on(async {
     /// let queue: SynchronizedQueue<VecBuffer<usize>> = SynchronizedQueue::with_capacity(42);
-    /// queue.try_enqueue(0).unwrap();
-    /// queue.try_enqueue(1).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
+    /// queue.try_enqueue([1]).unwrap();
     ///
     /// let mut stream = Box::pin(queue.stream());
     /// assert_eq!(stream.next().await, Some(0));
@@ -418,11 +416,11 @@ fn try_enqueue<B, T>(
 ) -> Result<Result<(), TryEnqueueError<T>>, T>
 where
     B: Buffer,
-    T: BufferValue<B>,
+    T: InsertIntoBuffer<B>,
 {
     for _ in 0..SPIN_LIMIT {
         match queue.try_enqueue(value) {
-            Err(TryEnqueueError::InsufficientCapacity(v)) if v.size().get() <= queue.capacity() => {
+            Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= queue.capacity() => {
                 value = v;
             }
             res => return Ok(res),
@@ -431,9 +429,7 @@ where
     }
     queue.notify().enqueuers.register(cx);
     match queue.try_enqueue(value) {
-        Err(TryEnqueueError::InsufficientCapacity(v)) if v.size().get() <= queue.capacity() => {
-            Err(v)
-        }
+        Err(TryEnqueueError::InsufficientCapacity(v)) if v.size() <= queue.capacity() => Err(v),
         res => Ok(res),
     }
 }
@@ -469,7 +465,10 @@ fn dequeue_err(error: TryDequeueError) -> DequeueError {
 
 fn wait_until(deadline: Option<Instant>) -> bool {
     match deadline.map(|d| d.checked_duration_since(Instant::now())) {
+        #[cfg(not(all(loom, test)))]
         Some(Some(timeout)) => thread::park_timeout(timeout),
+        #[cfg(all(loom, test))]
+        Some(Some(_)) => panic!("loom doesn't support park_timeout"),
         Some(None) => return true,
         None => thread::park(),
     }

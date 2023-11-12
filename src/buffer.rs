@@ -6,7 +6,6 @@ use std::{
     fmt,
     iter::FusedIterator,
     mem::ManuallyDrop,
-    num::NonZeroUsize,
     ops::{Deref, DerefMut, Range},
     ptr,
 };
@@ -22,11 +21,11 @@ pub use array::ArrayBuffer;
 #[cfg(feature = "std")]
 pub use vec::VecBuffer;
 
-/// [`Queue`] buffer. It is used together with [`BufferValue`].
+/// [`Queue`] buffer. It is used together with [`InsertIntoBuffer`].
 ///
 /// # Safety
 /// [`Buffer::clear`] *clears* the inserted range from the buffer
-/// (see [`BufferValue::insert_into`]), meaning new values can be inserted.
+/// (see [`InsertIntoBuffer::insert_into`]), meaning new values can be inserted.
 pub unsafe trait Buffer: Default {
     /// The slice type returned by [`slice`](Buffer::slice) method.
     type Slice<'a>
@@ -37,13 +36,13 @@ pub unsafe trait Buffer: Default {
     /// Returns a slice of the buffer.
     ///
     /// # Safety
-    /// Range **must** have been inserted (see [`BufferValue::insert_into`]) before calling
+    /// Range **must** have been inserted (see [`InsertIntoBuffer::insert_into`]) before calling
     /// this method.
     unsafe fn slice(&mut self, range: Range<usize>) -> Self::Slice<'_>;
     /// Clears the buffer.
     ///
     /// # Safety
-    /// Range **must** have been inserted (see [`BufferValue::insert_into`]) before calling
+    /// Range **must** have been inserted (see [`InsertIntoBuffer::insert_into`]) before calling
     /// this method.
     ///
     /// Calling this method *clears* the inserted value, meaning new values can be inserted.
@@ -54,17 +53,91 @@ pub unsafe trait Buffer: Default {
 ///
 /// # Safety
 /// Range `index..index+value.size()` is considered inserted into the buffer after calling
-/// [`BufferValue::insert_into`] (see [`Buffer::slice`]/[`Buffer::clear`])
-pub unsafe trait BufferValue<B: Buffer> {
+/// [`InsertIntoBuffer::insert_into`] (see [`Buffer::slice`]/[`Buffer::clear`])
+pub unsafe trait InsertIntoBuffer<B: Buffer> {
     /// Returns the size taken by a value in the buffer.
-    fn size(&self) -> NonZeroUsize;
+    fn size(&self) -> usize;
     /// Inserts the value into the buffer at the given index.
     ///
     /// # Safety
-    /// For every call to this method, the inserted range `index..index+size` **must not**
+    /// For every call to this method, the inserted range `index..index+self.size()` **must not**
     /// overlap with a previously inserted one.
-    /// `size` must be equal to `self.size()`
-    unsafe fn insert_into(self, buffer: &B, index: usize, size: NonZeroUsize);
+    unsafe fn insert_into(self, buffer: &B, index: usize);
+}
+
+/// [`Buffer`] kind where value are inserted one by one.
+///
+/// # Safety
+/// `index` is considered inserted into the buffer after calling [`CellBuffer::insert`] (see [`Buffer::slice`]/[`Buffer::clear`])
+pub(crate) unsafe trait CellBuffer<T>: Buffer {
+    /// Inserts a value into the buffer at the given index.
+    ///
+    /// # Safety
+    /// For every call to this method, `index` **must not** have previously been inserted.
+    unsafe fn insert(&self, index: usize, value: T);
+}
+
+/// Wrapper to implement [`InsertIntoBuffer`] on iterators.
+pub struct ValueIter<I>(pub I);
+
+/// Extension trait to instantiate [`ValueIter`].
+pub trait IntoValueIter: Sized {
+    /// Iterator type to be wrapped in [`ValueIter`].
+    type Iter;
+    /// Wrap iterator into [`ValueIter`].
+    fn into_value_iter(self) -> ValueIter<Self::Iter>;
+}
+
+impl<I> IntoValueIter for I
+where
+    I: IntoIterator,
+    I::IntoIter: ExactSizeIterator,
+{
+    type Iter = I::IntoIter;
+    fn into_value_iter(self) -> ValueIter<Self::Iter> {
+        ValueIter(self.into_iter())
+    }
+}
+
+// SAFETY: `insert_into` does initialize the slice in the buffer
+unsafe impl<B, I, T> InsertIntoBuffer<B> for ValueIter<I>
+where
+    B: CellBuffer<T>,
+    I: Iterator<Item = T> + ExactSizeIterator,
+{
+    #[inline]
+    fn size(&self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
+    unsafe fn insert_into(mut self, buffer: &B, index: usize) {
+        // don't loop on iterator, because `ExactSizeIterator` is not a sufficient guarantee
+        // for unsafe code
+        for i in index..(index + self.0.len()) {
+            // SAFETY: function contract encompass `CellBuffer::insert` one
+            unsafe { buffer.insert(i, self.0.next().unwrap()) };
+        }
+    }
+}
+
+// SAFETY: `insert_into` does initialize the slice in the buffer
+unsafe impl<B, T, const N: usize> InsertIntoBuffer<B> for [T; N]
+where
+    B: CellBuffer<T>,
+{
+    #[inline]
+    fn size(&self) -> usize {
+        N
+    }
+
+    #[inline]
+    unsafe fn insert_into(self, buffer: &B, index: usize) {
+        for (i, elt) in self.into_iter().enumerate() {
+            // SAFETY: function contract encompass `CellBuffer::insert` one
+            unsafe { buffer.insert(index + i, elt) };
+        }
+    }
 }
 
 /// Resizable [`Buffer`].
@@ -77,14 +150,14 @@ pub trait Resize: Buffer {
 ///
 /// # Safety
 /// Calling [`Drain::remove`] remove the inserted range `index..index+value.size()`
-/// (see [`BufferValue::insert_into`])
+/// (see [`InsertIntoBuffer::insert_into`])
 pub unsafe trait Drain: Buffer {
     /// Value to be removed from the buffer
     type Value;
     /// Removes a value from the buffer at a given index and return it with its size.
     ///
     /// # Safety
-    /// A value **must** have been inserted at this index (see [`BufferValue::insert_into`])
+    /// A value **must** have been inserted at this index (see [`InsertIntoBuffer::insert_into`])
     /// before calling this method.
     unsafe fn remove(&mut self, index: usize) -> (Self::Value, usize);
 }
@@ -100,8 +173,8 @@ pub unsafe trait Drain: Buffer {
 /// # use swap_buffer_queue::Queue;
 /// # use swap_buffer_queue::buffer::VecBuffer;
 /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
-/// queue.try_enqueue(0).unwrap();
-/// queue.try_enqueue(1).unwrap();
+/// queue.try_enqueue([0]).unwrap();
+/// queue.try_enqueue([1]).unwrap();
 ///
 /// let slice = queue.try_dequeue().unwrap();
 /// assert_eq!(slice.deref(), &[0, 1]);
@@ -146,8 +219,8 @@ where
     /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
-    /// queue.try_enqueue(0).unwrap();
-    /// queue.try_enqueue(1).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
+    /// queue.try_enqueue([1]).unwrap();
     ///
     /// let slice = queue.try_dequeue().unwrap();
     /// assert_eq!(slice.deref(), &[0, 1]);
@@ -233,8 +306,8 @@ where
 /// # use swap_buffer_queue::Queue;
 /// # use swap_buffer_queue::buffer::VecBuffer;
 /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
-/// queue.try_enqueue(0).unwrap();
-/// queue.try_enqueue(1).unwrap();
+/// queue.try_enqueue([0]).unwrap();
+/// queue.try_enqueue([1]).unwrap();
 ///
 /// let mut iter = queue.try_dequeue().unwrap().into_iter();
 /// assert_eq!(iter.next(), Some(0));
@@ -268,8 +341,8 @@ where
     /// # use swap_buffer_queue::Queue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// let queue: Arc<Queue<VecBuffer<usize>>> = Arc::new(Queue::with_capacity(42));
-    /// queue.try_enqueue(0).unwrap();
-    /// queue.try_enqueue(1).unwrap();
+    /// queue.try_enqueue([0]).unwrap();
+    /// queue.try_enqueue([1]).unwrap();
     ///
     /// let mut iter = queue
     ///     .try_dequeue()

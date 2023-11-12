@@ -1,7 +1,7 @@
-use std::{cell::Cell, io::IoSlice, mem, mem::MaybeUninit, num::NonZeroUsize, ops::Range};
+use std::{cell::Cell, io::IoSlice, mem, mem::MaybeUninit, ops::Range};
 
 use crate::{
-    buffer::{Buffer, BufferValue, Drain, Resize},
+    buffer::{Buffer, CellBuffer, Drain, Resize},
     loom::sync::atomic::{AtomicUsize, Ordering},
     write_vectored::{VectoredSlice, EMPTY_SLICE},
 };
@@ -60,29 +60,18 @@ where
     }
 }
 
-// SAFETY: `T::insert_into` does initialize the index in the buffer
-unsafe impl<T> BufferValue<WriteVectoredVecBuffer<T>> for T
+// SAFETY: `insert` does initialize the index in the buffer
+unsafe impl<T> CellBuffer<T> for WriteVectoredVecBuffer<T>
 where
     T: AsRef<[u8]>,
 {
-    #[inline]
-    fn size(&self) -> NonZeroUsize {
-        NonZeroUsize::new(1).unwrap()
-    }
-
-    #[inline]
-    unsafe fn insert_into(
-        self,
-        buffer: &WriteVectoredVecBuffer<T>,
-        index: usize,
-        _size: NonZeroUsize,
-    ) {
+    unsafe fn insert(&self, index: usize, value: T) {
         // SAFETY: slice is never read with static lifetime, it will only be used as a reference
         // with the same lifetime than the slice owner
-        let slice = unsafe { mem::transmute(IoSlice::new(self.as_ref())) };
-        buffer.slices[index + 1].set(slice);
-        buffer.owned[index].set(MaybeUninit::new(self));
-        buffer.total_size.fetch_add(slice.len(), Ordering::AcqRel);
+        let slice = unsafe { mem::transmute(IoSlice::new(value.as_ref())) };
+        self.slices[index + 1].set(slice);
+        self.owned[index].set(MaybeUninit::new(value));
+        self.total_size.fetch_add(slice.len(), Ordering::AcqRel);
     }
 }
 

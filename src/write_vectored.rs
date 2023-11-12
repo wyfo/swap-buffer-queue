@@ -7,12 +7,11 @@
 //! # Examples
 //! ```rust
 //! # use std::io::{IoSlice, Write};
-//! # use swap_buffer_queue::{write_vectored::WriteVectoredVecBuffer};
-//! # use swap_buffer_queue::Queue;
+//! # use swap_buffer_queue::{Queue, write_vectored::WriteVectoredVecBuffer};
 //! // Creates a WriteVectoredVecBuffer queue
 //! let queue: Queue<WriteVectoredVecBuffer<Vec<u8>>> = Queue::with_capacity(100);
-//! queue.try_enqueue(vec![0; 256]).unwrap();
-//! queue.try_enqueue(vec![42; 42]).unwrap();
+//! queue.try_enqueue([vec![0; 256]]).unwrap();
+//! queue.try_enqueue([vec![42; 42]]).unwrap();
 //! // Adds a header with the total size of the slices
 //! let mut slice = queue.try_dequeue().unwrap();
 //! let total_size = (slice.total_size() as u16).to_be_bytes();
@@ -55,7 +54,7 @@ pub(crate) static EMPTY_SLICE: &[u8] = &[];
 /// # use swap_buffer_queue::Queue;
 /// # use swap_buffer_queue::write_vectored::{VectoredSlice, WriteVectoredVecBuffer};
 /// # let queue: Queue<WriteVectoredVecBuffer<_>> = Queue::with_capacity(42);
-/// # queue.try_enqueue(vec![2, 3, 4, 5]).unwrap();
+/// # queue.try_enqueue([vec![2, 3, 4, 5]]).unwrap();
 /// let header = vec![0, 1];
 /// let trailer = vec![6, 7, 8, 9];
 /// let mut slice: BufferSlice<WriteVectoredVecBuffer<Vec<u8>>, _> /* = ... */;

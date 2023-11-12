@@ -19,17 +19,23 @@
 //!
 //! ```rust
 //! # use std::ops::Deref;
-//! # use swap_buffer_queue::{buffer::VecBuffer, Queue};
+//! # use swap_buffer_queue::{buffer::{IntoValueIter, VecBuffer}, Queue};
 //! // Initialize the queue with a capacity
 //! let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
-//! // Enqueue some values
-//! queue.try_enqueue(0).unwrap();
-//! queue.try_enqueue(1).unwrap();
+//! // Enqueue some value
+//! queue.try_enqueue([0]).unwrap();
+//! // Multiple values can be enqueued at the same time
+//! // (optimized compared to multiple enqueuing)
+//! queue.try_enqueue([1, 2]).unwrap();
+//! let mut values = vec![3, 4];
+//! queue
+//!     .try_enqueue(values.drain(..).into_value_iter())
+//!     .unwrap();
 //! // Dequeue a slice to the enqueued values
 //! let slice = queue.try_dequeue().unwrap();
-//! assert_eq!(slice.deref(), &[0, 1]);
+//! assert_eq!(slice.deref(), &[0, 1, 2, 3, 4]);
 //! // Enqueued values can also be retrieved
-//! assert_eq!(slice.into_iter().collect::<Vec<_>>(), vec![0, 1]);
+//! assert_eq!(slice.into_iter().collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
 //! ```
 
 extern crate alloc;

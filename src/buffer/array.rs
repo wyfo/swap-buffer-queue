@@ -1,7 +1,7 @@
-use std::{cell::Cell, mem::MaybeUninit, num::NonZeroUsize, ops::Range};
+use std::{cell::Cell, mem::MaybeUninit, ops::Range};
 
 use crate::{
-    buffer::{Buffer, BufferValue, Drain},
+    buffer::{Buffer, CellBuffer, Drain},
     utils::init_array,
 };
 
@@ -41,16 +41,10 @@ unsafe impl<T, const N: usize> Buffer for ArrayBuffer<T, N> {
     }
 }
 
-// SAFETY: `T::insert_into` does initialize the index in the buffer
-unsafe impl<T, const N: usize> BufferValue<ArrayBuffer<T, N>> for T {
-    #[inline]
-    fn size(&self) -> NonZeroUsize {
-        NonZeroUsize::new(1).unwrap()
-    }
-
-    #[inline]
-    unsafe fn insert_into(self, buffer: &ArrayBuffer<T, N>, index: usize, _size: NonZeroUsize) {
-        buffer.0[index].set(MaybeUninit::new(self));
+// SAFETY: `insert` does initialize the index in the buffer
+unsafe impl<T, const N: usize> CellBuffer<T> for ArrayBuffer<T, N> {
+    unsafe fn insert(&self, index: usize, value: T) {
+        self.0[index].set(MaybeUninit::new(value));
     }
 }
 

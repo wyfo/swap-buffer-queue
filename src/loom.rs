@@ -28,7 +28,7 @@ pub(crate) use without_loom::*;
 mod with_loom {
     #[cfg(feature = "std")]
     pub(crate) use loom::thread;
-    pub(crate) use loom::{cell, sync, thread};
+    pub(crate) use loom::{cell, sync};
 
     pub(crate) const SPIN_LIMIT: usize = 1;
     pub(crate) const BACKOFF_LIMIT: usize = 1;

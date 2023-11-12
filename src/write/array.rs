@@ -1,11 +1,10 @@
 use std::{
     cell::{Cell, UnsafeCell},
-    num::NonZeroUsize,
     ops::Range,
 };
 
 use crate::{
-    buffer::{Buffer, BufferValue},
+    buffer::{Buffer, InsertIntoBuffer},
     utils::ArrayWithHeaderAndTrailer,
     write::{BytesSlice, WriteBytesSlice},
 };
@@ -46,11 +45,11 @@ unsafe impl<const N: usize, const HEADER_SIZE: usize, const TRAILER_SIZE: usize>
 
 // SAFETY: Buffer values are `Copy` and already initialized
 unsafe impl<T, const N: usize, const HEADER_SIZE: usize, const TRAILER_SIZE: usize>
-    BufferValue<WriteArrayBuffer<N, HEADER_SIZE, TRAILER_SIZE>> for T
+    InsertIntoBuffer<WriteArrayBuffer<N, HEADER_SIZE, TRAILER_SIZE>> for T
 where
     T: WriteBytesSlice,
 {
-    fn size(&self) -> NonZeroUsize {
+    fn size(&self) -> usize {
         WriteBytesSlice::size(self)
     }
 
@@ -58,9 +57,9 @@ where
         self,
         buffer: &WriteArrayBuffer<N, HEADER_SIZE, TRAILER_SIZE>,
         index: usize,
-        size: NonZeroUsize,
     ) {
-        let slice = &buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + size.get()];
+        let slice =
+            &buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + WriteBytesSlice::size(&self)];
         // SAFETY: [Cell<u8>] has the same layout as UnsafeCell<[u8]>
         self.write(unsafe {
             &mut *UnsafeCell::raw_get(slice as *const _ as *const UnsafeCell<[u8]>)
