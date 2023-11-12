@@ -141,6 +141,16 @@ where
     notify: N,
 }
 
+// Needed for `BufferIter`
+impl<B, N> AsRef<Queue<B, N>> for Queue<B, N>
+where
+    B: Buffer,
+{
+    fn as_ref(&self) -> &Queue<B, N> {
+        self
+    }
+}
+
 // SAFETY: Buffer access is synchronized by the algorithm, but `Send` is required
 // because it is owned by the queue
 unsafe impl<B, N> Send for Queue<B, N>

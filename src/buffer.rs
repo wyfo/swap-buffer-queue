@@ -1,10 +1,9 @@
 //! [`Buffer`] definition and simple implementations.
 
-use core::marker::PhantomData;
 use std::{
-    borrow::Borrow,
     fmt,
     iter::FusedIterator,
+    marker::PhantomData,
     mem::ManuallyDrop,
     ops::{Deref, DerefMut, Range},
     ptr,
@@ -318,7 +317,7 @@ where
 /// ```
 pub struct BufferIter<Q, B, N>
 where
-    Q: Borrow<Queue<B, N>>,
+    Q: AsRef<Queue<B, N>>,
     B: Buffer,
 {
     queue: Q,
@@ -329,7 +328,7 @@ where
 
 impl<Q, B, N> BufferIter<Q, B, N>
 where
-    Q: Borrow<Queue<B, N>>,
+    Q: AsRef<Queue<B, N>>,
     B: Buffer,
 {
     /// Returns a "owned" version of the buffer iterator using a "owned" version of the queue.
@@ -357,10 +356,10 @@ where
     #[inline]
     pub fn with_owned<O>(self, queue: O) -> BufferIter<O, B, N>
     where
-        O: Borrow<Queue<B, N>>,
+        O: AsRef<Queue<B, N>>,
     {
         let iter = ManuallyDrop::new(self);
-        assert!(ptr::eq(iter.queue.borrow(), queue.borrow()));
+        assert!(ptr::eq(iter.queue.as_ref(), queue.as_ref()));
         BufferIter {
             queue,
             buffer_index: iter.buffer_index,
@@ -372,7 +371,7 @@ where
 
 impl<Q, B, N> fmt::Debug for BufferIter<Q, B, N>
 where
-    Q: Borrow<Queue<B, N>>,
+    Q: AsRef<Queue<B, N>>,
     B: Buffer,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -382,20 +381,20 @@ where
 
 impl<Q, B, N> Drop for BufferIter<Q, B, N>
 where
-    Q: Borrow<Queue<B, N>>,
+    Q: AsRef<Queue<B, N>>,
     B: Buffer,
 {
     #[inline]
     fn drop(&mut self) {
         self.queue
-            .borrow()
+            .as_ref()
             .requeue(self.buffer_index, self.range.clone());
     }
 }
 
 impl<Q, B, N> Iterator for BufferIter<Q, B, N>
 where
-    Q: Borrow<Queue<B, N>>,
+    Q: AsRef<Queue<B, N>>,
     B: Buffer + Drain,
 {
     type Item = B::Value;
@@ -407,7 +406,7 @@ where
         }
         let (value, size) = self
             .queue
-            .borrow()
+            .as_ref()
             .remove(self.buffer_index, self.range.start);
         self.range.start += size;
         debug_assert!(self.range.start <= self.range.end);
@@ -422,14 +421,14 @@ where
 
 impl<Q, B, N> ExactSizeIterator for BufferIter<Q, B, N>
 where
-    Q: Borrow<Queue<B, N>>,
+    Q: AsRef<Queue<B, N>>,
     B: Buffer + Drain,
 {
 }
 
 impl<Q, B, N> FusedIterator for BufferIter<Q, B, N>
 where
-    Q: Borrow<Queue<B, N>>,
+    Q: AsRef<Queue<B, N>>,
     B: Buffer + Drain,
 {
 }
