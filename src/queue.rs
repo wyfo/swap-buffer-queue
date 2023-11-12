@@ -692,7 +692,7 @@ where
     /// );
     /// // dequeue and resize, inserting elements before the buffer is available
     /// let slice = queue
-    ///     .try_dequeue_and_resize(3, Some(std::iter::once([42])))
+    ///     .try_dequeue_and_resize(3, Some(|| std::iter::once([42])))
     ///     .unwrap();
     /// assert_eq!(slice.deref(), &[0]);
     /// drop(slice);
@@ -744,7 +744,10 @@ where
     ///     // lock the overflow and use `try_dequeue_and_resize` to drain the overflow into the
     ///     // queue
     ///     let mut guard = overflow.lock().unwrap();
-    ///     queue.try_dequeue_and_resize(queue.capacity() + guard.len(), Some(guard.drain(..)))
+    ///     let vec = &mut guard;
+    ///     // `{ vec }` is a trick to get the correct FnOnce inference
+    ///     // https://stackoverflow.com/questions/74814588/why-does-rust-infer-fnmut-instead-of-fnonce-for-this-closure-even-though-inferr
+    ///     queue.try_dequeue_and_resize(queue.capacity() + vec.len(), Some(|| { vec }.drain(..)))
     /// }
     ///
     /// // queue is initialized with zero capacity
@@ -763,13 +766,14 @@ where
     ///     &[1, 2]
     /// );
     /// ```
-    pub fn try_dequeue_and_resize<T>(
+    pub fn try_dequeue_and_resize<I>(
         &self,
         capacity: impl Into<Option<usize>>,
-        insert: Option<impl Iterator<Item = T>>,
+        insert: Option<impl FnOnce() -> I>,
     ) -> Result<BufferSlice<B, N>, TryDequeueError>
     where
-        T: InsertIntoBuffer<B>,
+        I: IntoIterator,
+        I::Item: InsertIntoBuffer<B>,
     {
         self.try_dequeue_internal(
             self.lock_dequeuing()?,
@@ -784,7 +788,7 @@ where
                 }
                 let mut length = 0;
                 if let Some(insert) = insert {
-                    for value in insert {
+                    for value in insert() {
                         let Some(value_size) = NonZeroUsize::new(value.size()) else {
                             continue;
                         };
