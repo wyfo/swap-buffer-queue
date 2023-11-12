@@ -486,6 +486,14 @@ where
         );
     }
 
+    pub(crate) fn get_slice(&self, buffer_index: usize, range: Range<usize>) -> B::Slice<'_> {
+        self.buffers[buffer_index]
+            // SAFETY: Dequeued buffer pointed by buffer index can be accessed mutably
+            // (see `Queue::try_dequeue_spin`).
+            // SAFETY: Range comes from the dequeued slice, so it has been previously inserted.
+            .with_mut(|buf| unsafe { (*buf).slice(range.clone()) })
+    }
+
     pub(crate) fn requeue(&self, buffer_index: usize, range: Range<usize>) {
         // Requeuing the buffer just means saving the dequeuing state (or release if there is
         // nothing to requeue).
@@ -812,7 +820,7 @@ impl<B, N> Queue<B, N>
 where
     B: Buffer + Drain,
 {
-    pub(crate) fn remove(&self, buffer_index: usize, index: usize) -> (B::Value, usize) {
+    pub(crate) fn remove(&self, buffer_index: usize, index: usize) -> B::Value {
         debug_assert_eq!(
             self.dequeuing_length.load(Ordering::Relaxed),
             DEQUEUING_LOCKED

@@ -97,7 +97,7 @@ where
     type Value = T;
 
     #[inline]
-    unsafe fn remove(&mut self, index: usize) -> (Self::Value, usize) {
+    unsafe fn remove(&mut self, index: usize) -> Self::Value {
         // SAFETY: function contract guarantees that the index has been inserted and is then initialized
         let value = unsafe {
             self.owned[index]
@@ -106,6 +106,6 @@ where
         };
         self.total_size
             .fetch_sub(value.as_ref().len(), Ordering::Release);
-        (value, 1)
+        value
     }
 }

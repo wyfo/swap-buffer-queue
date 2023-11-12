@@ -19,9 +19,9 @@ license = "MIT"
 repository = "https://github.com/wyfo/swap-buffer-queue"
 
 [features]
-default = ["futures"]
-futures = ["std", "dep:futures"]
+default = ["stream"]
 std = []
+stream = ["std", "dep:futures"]
 write = []
 
 [dependencies]
@@ -33,7 +33,7 @@ tokio-test = "0.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "time"] }
 
 [target.'cfg(loom)'.dev-dependencies]
-loom = "0.5"
+loom = { version = "0.6.0", features = ["futures"] }
 
 # See tokio Cargo.toml
 [package.metadata.docs.rs]

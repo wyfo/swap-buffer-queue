@@ -148,17 +148,17 @@ pub trait Resize: Buffer {
 /// [`Buffer`] whose values can be drained from.
 ///
 /// # Safety
-/// Calling [`Drain::remove`] remove the inserted range `index..index+value.size()`
+/// Calling [`Drain::remove`] remove the value inserted at index `index
 /// (see [`InsertIntoBuffer::insert_into`])
 pub unsafe trait Drain: Buffer {
     /// Value to be removed from the buffer
     type Value;
-    /// Removes a value from the buffer at a given index and return it with its size.
+    /// Removes a value from the buffer at a given index and return it.
     ///
     /// # Safety
     /// A value **must** have been inserted at this index (see [`InsertIntoBuffer::insert_into`])
     /// before calling this method.
-    unsafe fn remove(&mut self, index: usize) -> (Self::Value, usize);
+    unsafe fn remove(&mut self, index: usize) -> Self::Value;
 }
 
 /// [`Buffer`] slice returned by [`Queue::try_dequeue`] (see [`Buffer::Slice`]).
@@ -281,7 +281,7 @@ where
     B: Buffer + Drain,
 {
     type Item = B::Value;
-    type IntoIter = BufferIter<&'a Queue<B, N>, B, N>;
+    type IntoIter = BufferIter<'a, B, N>;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
@@ -315,7 +315,7 @@ where
 /// assert_eq!(iter.next(), Some(1));
 /// assert_eq!(iter.next(), None);
 /// ```
-pub struct BufferIter<Q, B, N>
+pub struct OwnedBufferIter<Q, B, N>
 where
     Q: AsRef<Queue<B, N>>,
     B: Buffer,
@@ -326,7 +326,42 @@ where
     _phantom: PhantomData<Queue<B, N>>,
 }
 
-impl<Q, B, N> BufferIter<Q, B, N>
+/// Alias of [`OwnedBufferIter`] with a queue reference.
+pub type BufferIter<'a, B, N> = OwnedBufferIter<&'a Queue<B, N>, B, N>;
+
+impl<'a, B, N> BufferIter<'a, B, N>
+where
+    B: Buffer,
+{
+    /// Convert back a buffer iterator into a buffer slice.
+    ///
+    /// # Examples
+    /// ```
+    /// # use std::ops::Deref;
+    /// # use std::sync::Arc;
+    /// # use swap_buffer_queue::Queue;
+    /// # use swap_buffer_queue::buffer::VecBuffer;
+    /// let queue: Arc<Queue<VecBuffer<usize>>> = Arc::new(Queue::with_capacity(42));
+    /// queue.try_enqueue([0]).unwrap();
+    /// queue.try_enqueue([1]).unwrap();
+    ///
+    /// let iter = queue.try_dequeue().unwrap().into_iter();
+    /// let slice = iter.into_slice();
+    /// assert_eq!(slice.deref(), &[0, 1]);
+    /// ```
+    #[inline]
+    pub fn into_slice(self) -> BufferSlice<'a, B, N> {
+        let iter = ManuallyDrop::new(self);
+        BufferSlice {
+            queue: iter.queue,
+            buffer_index: iter.buffer_index,
+            range: iter.range.clone(),
+            slice: iter.queue.get_slice(iter.buffer_index, iter.range.clone()),
+        }
+    }
+}
+
+impl<Q, B, N> OwnedBufferIter<Q, B, N>
 where
     Q: AsRef<Queue<B, N>>,
     B: Buffer,
@@ -354,13 +389,16 @@ where
     /// assert_eq!(iter.next(), None);
     /// ```
     #[inline]
-    pub fn with_owned<O>(self, queue: O) -> BufferIter<O, B, N>
+    pub fn with_owned<O>(self, queue: O) -> OwnedBufferIter<O, B, N>
     where
         O: AsRef<Queue<B, N>>,
     {
         let iter = ManuallyDrop::new(self);
-        assert!(ptr::eq(iter.queue.as_ref(), queue.as_ref()));
-        BufferIter {
+        assert!(
+            ptr::eq(iter.queue.as_ref(), queue.as_ref()),
+            "new owner must reference the queue referenced by the iterator"
+        );
+        OwnedBufferIter {
             queue,
             buffer_index: iter.buffer_index,
             range: iter.range.clone(),
@@ -369,7 +407,7 @@ where
     }
 }
 
-impl<Q, B, N> fmt::Debug for BufferIter<Q, B, N>
+impl<Q, B, N> fmt::Debug for OwnedBufferIter<Q, B, N>
 where
     Q: AsRef<Queue<B, N>>,
     B: Buffer,
@@ -379,7 +417,7 @@ where
     }
 }
 
-impl<Q, B, N> Drop for BufferIter<Q, B, N>
+impl<Q, B, N> Drop for OwnedBufferIter<Q, B, N>
 where
     Q: AsRef<Queue<B, N>>,
     B: Buffer,
@@ -392,7 +430,7 @@ where
     }
 }
 
-impl<Q, B, N> Iterator for BufferIter<Q, B, N>
+impl<Q, B, N> Iterator for OwnedBufferIter<Q, B, N>
 where
     Q: AsRef<Queue<B, N>>,
     B: Buffer + Drain,
@@ -404,12 +442,11 @@ where
         if self.range.is_empty() {
             return None;
         }
-        let (value, size) = self
+        let value = self
             .queue
             .as_ref()
             .remove(self.buffer_index, self.range.start);
-        self.range.start += size;
-        debug_assert!(self.range.start <= self.range.end);
+        self.range.start += 1;
         Some(value)
     }
 
@@ -419,14 +456,14 @@ where
     }
 }
 
-impl<Q, B, N> ExactSizeIterator for BufferIter<Q, B, N>
+impl<Q, B, N> ExactSizeIterator for OwnedBufferIter<Q, B, N>
 where
     Q: AsRef<Queue<B, N>>,
     B: Buffer + Drain,
 {
 }
 
-impl<Q, B, N> FusedIterator for BufferIter<Q, B, N>
+impl<Q, B, N> FusedIterator for OwnedBufferIter<Q, B, N>
 where
     Q: AsRef<Queue<B, N>>,
     B: Buffer + Drain,

@@ -62,8 +62,5 @@ pub mod write_vectored;
 
 pub use queue::Queue;
 #[cfg(feature = "std")]
-pub use synchronized::SynchronizedNotifier;
-#[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-/// [`Queue`] with [`SynchronizedNotifier`]
-pub type SynchronizedQueue<B> = Queue<B, SynchronizedNotifier>;
+pub use synchronized::{SynchronizedNotifier, SynchronizedQueue};
