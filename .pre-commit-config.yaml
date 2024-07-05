@@ -8,7 +8,7 @@ repos:
     hooks:
       - id: fmt
         name: fmt
-        entry: cargo +nightly fmt
+        entry: cargo fmt -- --config "unstable_features=true,imports_granularity=Crate,group_imports=StdExternalCrate,format_code_in_doc_comments=true"
         language: rust
         pass_filenames: false
         types_or: [rust, toml]
