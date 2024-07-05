@@ -3,7 +3,7 @@
 #![forbid(missing_docs)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![forbid(clippy::undocumented_unsafe_blocks)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 //! # swap-buffer-queue
 //! A buffering MPSC queue.
@@ -41,8 +41,8 @@
 //! assert_eq!(slice.into_iter().collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
 //! ```
 
-#[cfg(not(feature = "std"))]
-extern crate core as std;
+#[cfg(feature = "alloc")]
+extern crate alloc;
 
 pub mod buffer;
 pub mod error;
@@ -50,19 +50,14 @@ mod loom;
 pub mod notify;
 mod queue;
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 mod synchronized;
 mod utils;
 #[cfg(feature = "write")]
-#[cfg_attr(docsrs, doc(cfg(feature = "write")))]
 pub mod write;
 #[cfg(feature = "write")]
-#[cfg_attr(docsrs, doc(cfg(feature = "write")))]
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod write_vectored;
 
 pub use queue::Queue;
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub use synchronized::{SynchronizedNotifier, SynchronizedQueue};

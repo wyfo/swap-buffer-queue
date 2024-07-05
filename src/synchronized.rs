@@ -1,3 +1,23 @@
+//! Synchronization primitives for [`Queue`].
+//!
+//! It supports both synchronous and asynchronous API. [`SynchronizedQueue`] is just an alias
+//! for a [`Queue`] using [`SynchronizedNotifier`].
+//!
+//! # Examples
+//! ```rust
+//! # use std::sync::Arc;
+//! # use swap_buffer_queue::SynchronizedQueue;
+//! # use swap_buffer_queue::buffer::VecBuffer;
+//! let queue: Arc<SynchronizedQueue<VecBuffer<usize>>> =
+//!     Arc::new(SynchronizedQueue::with_capacity(1));
+//! let queue_clone = queue.clone();
+//! std::thread::spawn(move || {
+//!     queue_clone.enqueue([0]).unwrap();
+//!     queue_clone.enqueue([1]).unwrap();
+//! });
+//! assert_eq!(queue.dequeue().unwrap()[0], 0);
+//! assert_eq!(queue.dequeue().unwrap()[0], 1);
+//! ```
 use std::{
     fmt,
     future::poll_fn,
@@ -380,12 +400,11 @@ where
     }
 
     #[cfg(feature = "stream")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "stream")))]
     /// Returns an stream over the element of the queue (see [`BufferIter`](crate::buffer::BufferIter)).
     ///
     /// # Examples
     /// ```
-    /// # use futures::StreamExt;
+    /// # use futures_util::StreamExt;
     /// # use swap_buffer_queue::SynchronizedQueue;
     /// # use swap_buffer_queue::buffer::VecBuffer;
     /// # tokio_test::block_on(async {
@@ -402,8 +421,8 @@ where
     /// assert_eq!(stream.next().await, None);
     /// # })
     /// ```
-    pub fn stream(&self) -> impl futures::Stream<Item = B::Value> + '_ {
-        use futures::{stream, StreamExt};
+    pub fn stream(&self) -> impl futures_core::Stream<Item = B::Value> + '_ {
+        use futures_util::{stream, StreamExt};
         stream::repeat_with(|| stream::once(self.dequeue_async()))
             .flatten()
             .take_while(|res| {

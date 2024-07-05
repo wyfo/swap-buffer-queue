@@ -1,6 +1,6 @@
 //! [`Buffer`] definition and simple implementations.
 
-use std::{
+use core::{
     fmt,
     iter::FusedIterator,
     marker::PhantomData,
@@ -12,12 +12,11 @@ use std::{
 use crate::queue::Queue;
 
 mod array;
-#[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+#[cfg(feature = "alloc")]
 mod vec;
 
 pub use array::ArrayBuffer;
-#[cfg(feature = "std")]
+#[cfg(feature = "alloc")]
 pub use vec::VecBuffer;
 
 /// [`Queue`] buffer. It is used together with [`InsertIntoBuffer`].
@@ -114,8 +113,9 @@ where
         // don't loop on iterator, because `ExactSizeIterator` is not a sufficient guarantee
         // for unsafe code
         for i in index..(index + self.0.len()) {
+            const ERROR: &str = "iterator exhausted before reaching its exact size";
             // SAFETY: function contract encompass `CellBuffer::insert` one
-            unsafe { buffer.insert(i, self.0.next().unwrap()) };
+            unsafe { buffer.insert(i, self.0.next().expect(ERROR)) };
         }
     }
 }

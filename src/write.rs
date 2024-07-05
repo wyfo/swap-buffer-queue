@@ -29,12 +29,11 @@
 use std::ops::{Deref, DerefMut};
 
 mod array;
-#[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+#[cfg(feature = "alloc")]
 mod vec;
 
 pub use array::WriteArrayBuffer;
-#[cfg(feature = "std")]
+#[cfg(feature = "alloc")]
 pub use vec::WriteVecBuffer;
 
 /// A bytes slice with a `HEADER_SIZE`-bytes header and a `TRAILER_SIZE`-bytes trailer.

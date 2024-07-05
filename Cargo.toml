@@ -7,29 +7,31 @@ description = "A buffering MPSC queue."
 homepage = "https://github.com/wyfo/swap-buffer-queue"
 readme = "README.md"
 keywords = [
-    "atomic",
-    "lock-free",
-    "no-std",
-    "mpsc",
-    "async",
+  "atomic",
+  "lock-free",
+  "no-std",
+  "mpsc",
+  "async",
 ]
 categories = [
-    "concurrency",
-    "data-structures",
-    "no-std",
+  "concurrency",
+  "data-structures",
+  "no-std",
 ]
 license = "MIT"
 repository = "https://github.com/wyfo/swap-buffer-queue"
 
 [features]
-default = ["stream"]
-std = []
-stream = ["std", "dep:futures"]
+default = ["std"]
+alloc = []
+std = ["alloc"]
+stream = ["dep:futures-core", "dep:futures-util"]
 write = []
 
 [dependencies]
 crossbeam-utils = { version = "0.8", default-features = false }
-futures = { version = "0.3", optional = true }
+futures-core = { version = "0.3", default-features = false, optional = true }
+futures-util = { version = "0.3", default-features = false, optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -45,6 +47,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = [
-    "--cfg",
-    "docsrs",
+  "--cfg",
+  "docsrs",
 ]

@@ -1,4 +1,4 @@
-use std::{fmt, num::NonZeroUsize, ops::Range};
+use core::{fmt, num::NonZeroUsize, ops::Range};
 
 use crossbeam_utils::CachePadded;
 
@@ -281,6 +281,7 @@ where
     /// queue.try_enqueue([0]).unwrap();
     /// assert_eq!(queue.len(), 1);
     /// ```
+    #[inline]
     pub fn len(&self) -> usize {
         let enqueuing =
             EnqueuingCapacity::from_atomic(self.enqueuing_capacity.load(Ordering::Relaxed));
@@ -406,7 +407,7 @@ where
             // Spin in case of concurrent modifications, except when the buffer is full ofc.
             if enqueuing.remaining_capacity() != 0 {
                 for _ in 0..1 << backoff {
-                    std::hint::spin_loop();
+                    hint::spin_loop();
                 }
                 if backoff < BACKOFF_LIMIT {
                     backoff += 1;
@@ -467,7 +468,7 @@ where
                     .with_mut(|buf| unsafe { (*buf).slice(range.clone()) });
                 return Some(BufferSlice::new(self, buffer_index, range, slice));
             }
-            std::hint::spin_loop();
+            hint::spin_loop();
         }
         // If the enqueuing are still ongoing, just save the dequeuing state in order to retry.
         self.dequeuing_length.store(
@@ -564,7 +565,7 @@ where
             };
             if let Some(ref mut backoff) = backoff {
                 for _ in 0..1 << *backoff {
-                    std::hint::spin_loop();
+                    hint::spin_loop();
                 }
                 if *backoff < BACKOFF_LIMIT {
                     *backoff += 1;

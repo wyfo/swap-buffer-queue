@@ -1,6 +1,6 @@
 //! Queue error types.
 
-use std::fmt;
+use core::fmt;
 
 /// Error returned by [`Queue::try_enqueue`](crate::Queue::try_enqueue).
 ///

@@ -1,4 +1,4 @@
-use std::{
+use core::{
     mem,
     mem::MaybeUninit,
     ops::{Deref, DerefMut},

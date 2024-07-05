@@ -1,4 +1,5 @@
-use std::{cell::Cell, mem::MaybeUninit, ops::Range};
+use alloc::boxed::Box;
+use core::{cell::Cell, mem::MaybeUninit, ops::Range};
 
 use crate::buffer::{Buffer, CellBuffer, Drain, Resize};
 

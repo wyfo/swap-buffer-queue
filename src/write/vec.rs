@@ -1,4 +1,5 @@
-use std::{
+use alloc::boxed::Box;
+use core::{
     cell::{Cell, UnsafeCell},
     ops::Range,
 };
