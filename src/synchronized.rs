@@ -51,6 +51,7 @@ impl<B> SynchronizedQueue<B>
 where
     B: Buffer,
 {
+    #[inline]
     fn enqueue_sync<T>(
         &self,
         mut value: T,
@@ -413,6 +414,7 @@ where
     }
 }
 
+#[inline]
 fn try_enqueue<B, T>(
     queue: &SynchronizedQueue<B>,
     mut value: T,
@@ -438,6 +440,7 @@ where
     }
 }
 
+#[inline]
 fn try_dequeue<'a, B>(
     queue: &'a SynchronizedQueue<B>,
     cx: Option<&Context>,
@@ -459,6 +462,7 @@ where
     }
 }
 
+#[inline]
 fn dequeue_err(error: TryDequeueError) -> DequeueError {
     match error {
         TryDequeueError::Closed => DequeueError::Closed,
@@ -467,6 +471,7 @@ fn dequeue_err(error: TryDequeueError) -> DequeueError {
     }
 }
 
+#[inline]
 fn wait_until(deadline: Option<Instant>) -> bool {
     match deadline.map(|d| d.checked_duration_since(Instant::now())) {
         #[cfg(not(all(loom, test)))]

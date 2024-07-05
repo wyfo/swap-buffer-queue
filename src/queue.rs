@@ -297,6 +297,7 @@ where
     /// let queue: Queue<VecBuffer<usize>> = Queue::with_capacity(42);
     /// assert!(queue.is_empty());
     /// ```
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -312,6 +313,7 @@ where
     /// queue.close();
     /// assert!(queue.is_closed());
     /// ```
+    #[inline]
     pub fn is_closed(&self) -> bool {
         EnqueuingCapacity::from_atomic(self.enqueuing_capacity.load(Ordering::Relaxed)).is_closed()
     }
@@ -330,6 +332,7 @@ where
     /// queue.reopen();
     /// assert!(!queue.is_closed());
     /// ```
+    #[inline]
     pub fn reopen(&self) {
         EnqueuingCapacity::reopen(&self.enqueuing_capacity, Ordering::AcqRel);
     }
@@ -487,6 +490,7 @@ where
         );
     }
 
+    #[inline]
     pub(crate) fn get_slice(&self, buffer_index: usize, range: Range<usize>) -> B::Slice<'_> {
         self.buffers[buffer_index]
             // SAFETY: Dequeued buffer pointed by buffer index can be accessed mutably
@@ -495,6 +499,7 @@ where
             .with_mut(|buf| unsafe { (*buf).slice(range.clone()) })
     }
 
+    #[inline]
     pub(crate) fn requeue(&self, buffer_index: usize, range: Range<usize>) {
         // Requeuing the buffer just means saving the dequeuing state (or release if there is
         // nothing to requeue).
