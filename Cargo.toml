@@ -36,9 +36,12 @@ tokio-test = "0.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "time"] }
 
 [target.'cfg(loom)'.dev-dependencies]
-loom = { version = "0.6.0", features = ["futures"] }
+loom = { version = "0.7", features = ["futures"] }
 
-# See tokio Cargo.toml
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
+# see https://users.rust-lang.org/t/how-to-document-optional-features-in-api-docs/64577/3
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = [

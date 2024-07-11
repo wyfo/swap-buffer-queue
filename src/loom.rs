@@ -1,8 +1,10 @@
 #[cfg(not(all(loom, test)))]
 mod without_loom {
+    #[cfg(not(feature = "std"))]
+    pub(crate) use core::sync;
+    pub(crate) use core::{cell, hint};
     #[cfg(feature = "std")]
-    pub(crate) use std::thread;
-    pub(crate) use std::{cell, sync};
+    pub(crate) use std::{sync, thread};
 
     pub(crate) const SPIN_LIMIT: usize = 64;
     pub(crate) const BACKOFF_LIMIT: usize = 6;
@@ -11,6 +13,10 @@ mod without_loom {
     pub(crate) struct LoomUnsafeCell<T>(cell::UnsafeCell<T>);
 
     impl<T> LoomUnsafeCell<T> {
+        pub(crate) const fn new(data: T) -> Self {
+            Self(cell::UnsafeCell::new(data))
+        }
+
         pub(crate) fn with<R>(&self, f: impl FnOnce(*const T) -> R) -> R {
             f(self.0.get())
         }
@@ -28,7 +34,7 @@ pub(crate) use without_loom::*;
 mod with_loom {
     #[cfg(feature = "std")]
     pub(crate) use loom::thread;
-    pub(crate) use loom::{cell, sync};
+    pub(crate) use loom::{cell, hint, sync};
 
     pub(crate) const SPIN_LIMIT: usize = 1;
     pub(crate) const BACKOFF_LIMIT: usize = 1;

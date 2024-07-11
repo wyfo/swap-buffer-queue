@@ -6,6 +6,7 @@ use crate::{
     buffer::{Buffer, BufferSlice, Drain, InsertIntoBuffer, Resize},
     error::{TryDequeueError, TryEnqueueError},
     loom::{
+        hint,
         sync::atomic::{AtomicUsize, Ordering},
         LoomUnsafeCell, BACKOFF_LIMIT, SPIN_LIMIT,
     },

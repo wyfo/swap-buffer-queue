@@ -11,13 +11,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          override: true
-          components: rustfmt, clippy, miri
-      - run: cargo +nightly fmt --check
-      - run: cargo clippy --no-default-features -- -D warnings
-      - run: cargo clippy --all-features --tests -- -D warnings
-      - run: cargo test --all-features
-      - run: cargo +nightly miri test --all-features
+      - name: rustfmt
+        run: cargo fmt -- --config "unstable_features=true,imports_granularity=Crate,group_imports=StdExternalCrate,format_code_in_doc_comments=true"
+      - name: clippy no-default-feature
+        run: cargo clippy --no-default-features -- -D warnings
+      - name: clippy all-features
+        run: cargo clippy --all-features --tests -- -D warnings
+      - name: test
+        run: cargo test --all-features
+      - name: miri
+        run: cargo +nightly miri test --all-features --all-seeds
+      - name: loom
+        run: cargo test --release --lib
+        env:
+          RUSTFLAGS: "--cfg loom"

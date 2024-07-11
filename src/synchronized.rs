@@ -9,7 +9,7 @@ use std::{
 use crate::{
     buffer::{Buffer, BufferSlice, Drain, InsertIntoBuffer},
     error::{DequeueError, EnqueueError, TryDequeueError, TryEnqueueError},
-    loom::{thread, SPIN_LIMIT},
+    loom::{hint, thread, SPIN_LIMIT},
     notify::Notify,
     synchronized::{atomic_waker::AtomicWaker, waker_list::WakerList},
     Queue,
@@ -429,7 +429,7 @@ where
             }
             res => return Ok(res),
         };
-        std::hint::spin_loop();
+        hint::spin_loop();
     }
     queue.notify().enqueuers.register(cx);
     match queue.try_enqueue(value) {
@@ -450,7 +450,7 @@ where
             Err(TryDequeueError::Empty | TryDequeueError::Pending) => {}
             res => return Some(res),
         }
-        std::hint::spin_loop();
+        hint::spin_loop();
     }
     queue.notify().dequeuer.register(cx);
     match queue.try_dequeue() {
