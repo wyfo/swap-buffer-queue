@@ -19,6 +19,8 @@ jobs:
         run: cargo clippy --all-features --tests -- -D warnings
       - name: test
         run: cargo test --all-features
+      - name: install miri
+        run: rustup install nightly && rustup +nightly component add miri
       - name: miri
         run: cargo +nightly miri test --all-features --all-seeds
       - name: loom
