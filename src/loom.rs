@@ -13,7 +13,8 @@ mod without_loom {
     pub(crate) struct LoomUnsafeCell<T>(cell::UnsafeCell<T>);
 
     impl<T> LoomUnsafeCell<T> {
-        pub(crate) const fn new(data: T) -> Self {
+        #[cfg(feature = "std")]
+        pub(crate) fn new(data: T) -> Self {
             Self(cell::UnsafeCell::new(data))
         }
 

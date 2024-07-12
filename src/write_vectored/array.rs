@@ -71,7 +71,7 @@ where
     unsafe fn insert(&self, index: usize, value: T) {
         // SAFETY: slice is never read with static lifetime, it will only be used as a reference
         // with the same lifetime than the slice owner
-        let slice = unsafe { mem::transmute(IoSlice::new(value.as_ref())) };
+        let slice = unsafe { mem::transmute::<IoSlice, IoSlice>(IoSlice::new(value.as_ref())) };
         self.slices[index + 1].set(slice);
         self.owned[index].set(MaybeUninit::new(value));
         self.total_size.fetch_add(slice.len(), Ordering::AcqRel);

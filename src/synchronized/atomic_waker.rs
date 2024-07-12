@@ -82,7 +82,7 @@ impl AtomicWaker {
                 let waker = unsafe { self.waker.with_mut(|w| (*w).take()) };
                 self.state.fetch_and(!WAKING, Ordering::Release);
                 if let Some(waker) = waker {
-                    waker.wake()
+                    waker.wake();
                 }
             }
             state => {

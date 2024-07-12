@@ -134,7 +134,7 @@ impl<'a> VectoredSlice<'a> {
         let header = if let Some(header) = header {
             // SAFETY: `self.slices[start..end]` will be transmuted right after to `[IoSlice<'a>]
             Some(mem::replace(&mut self.slices[start], unsafe {
-                mem::transmute(IoSlice::new(header))
+                mem::transmute::<IoSlice, IoSlice>(IoSlice::new(header))
             }))
         } else {
             start += 1;
@@ -143,7 +143,7 @@ impl<'a> VectoredSlice<'a> {
         let trailer = if let Some(trailer) = trailer {
             // SAFETY: `self.slices[start..end]` will be transmuted right after to `[IoSlice<'a>]
             Some(mem::replace(&mut self.slices[end - 1], unsafe {
-                mem::transmute(IoSlice::new(trailer))
+                mem::transmute::<IoSlice, IoSlice>(IoSlice::new(trailer))
             }))
         } else {
             end -= 1;
@@ -155,7 +155,9 @@ impl<'a> VectoredSlice<'a> {
             // (respectively `end == self.slices.len()`) means that `self.slices[start]`
             // (respectively `self.slices[end]`) has `'a` lifetime because it's set from `header`
             // (respectively `trailer`) parameter above
-            slices: unsafe { mem::transmute(&mut self.slices[start..end]) },
+            slices: unsafe {
+                mem::transmute::<&mut [IoSlice], &mut [IoSlice]>(&mut self.slices[start..end])
+            },
             header,
             trailer,
         }
