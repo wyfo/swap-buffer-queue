@@ -26,7 +26,7 @@
 //! assert_eq!(writer.write(slice.frame()).unwrap(), 300);
 //! ```
 
-use std::ops::{Deref, DerefMut};
+use core::ops::{Deref, DerefMut};
 
 mod array;
 #[cfg(feature = "alloc")]

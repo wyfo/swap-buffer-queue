@@ -1,8 +1,11 @@
-use std::{cell::Cell, io::IoSlice, mem, mem::MaybeUninit, ops::Range};
+use std::{io::IoSlice, mem, mem::MaybeUninit, ops::Range};
 
 use crate::{
     buffer::{Buffer, CellBuffer, Drain, Resize},
-    loom::sync::atomic::{AtomicUsize, Ordering},
+    loom::{
+        cell::Cell,
+        sync::atomic::{AtomicUsize, Ordering},
+    },
     write_vectored::{VectoredSlice, EMPTY_SLICE},
 };
 

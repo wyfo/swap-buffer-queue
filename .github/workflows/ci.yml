@@ -13,10 +13,9 @@ jobs:
       - uses: actions/checkout@v3
       - name: rustfmt
         run: cargo fmt -- --config "unstable_features=true,imports_granularity=Crate,group_imports=StdExternalCrate,format_code_in_doc_comments=true"
-      - name: clippy no-default-feature
-        run: cargo clippy --no-default-features -- -D warnings
-      - name: clippy all-features
-        run: cargo clippy --all-features --tests -- -D warnings
+      - uses: taiki-e/install-action@cargo-hack
+      - name: clippy
+        run: cargo hack clippy --feature-powerset -- -D warnings
       - name: test
         run: cargo test --all-features
       - name: install miri

@@ -1,10 +1,8 @@
-use std::{
-    cell::{Cell, UnsafeCell},
-    ops::Range,
-};
+use core::ops::Range;
 
 use crate::{
     buffer::{Buffer, InsertIntoBuffer},
+    loom::{cell::Cell, LoomUnsafeCell},
     utils::ArrayWithHeaderAndTrailer,
     write::{BytesSlice, WriteBytesSlice},
 };
@@ -61,8 +59,8 @@ where
         let slice =
             &buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + WriteBytesSlice::size(&self)];
         // SAFETY: [Cell<u8>] has the same layout as UnsafeCell<[u8]>
-        self.write(unsafe {
-            &mut *UnsafeCell::raw_get(slice as *const _ as *const UnsafeCell<[u8]>)
-        });
+        unsafe {
+            (*(slice as *const _ as *const LoomUnsafeCell<[u8]>)).with_mut(|s| self.write(&mut *s));
+        };
     }
 }

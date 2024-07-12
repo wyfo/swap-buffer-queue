@@ -1,11 +1,9 @@
 use alloc::boxed::Box;
-use core::{
-    cell::{Cell, UnsafeCell},
-    ops::Range,
-};
+use core::ops::Range;
 
 use crate::{
     buffer::{Buffer, InsertIntoBuffer, Resize},
+    loom::{cell::Cell, LoomUnsafeCell},
     write::{BytesSlice, WriteBytesSlice},
 };
 
@@ -55,9 +53,9 @@ where
         let slice =
             &buffer.0[HEADER_SIZE + index..HEADER_SIZE + index + WriteBytesSlice::size(&self)];
         // SAFETY: [Cell<u8>] has the same layout as UnsafeCell<[u8]>
-        self.write(unsafe {
-            &mut *UnsafeCell::raw_get(slice as *const _ as *const UnsafeCell<[u8]>)
-        });
+        unsafe {
+            (*(slice as *const _ as *const LoomUnsafeCell<[u8]>)).with_mut(|s| self.write(&mut *s));
+        };
     }
 }
 
@@ -66,9 +64,8 @@ impl<const HEADER_SIZE: usize, const TRAILER_SIZE: usize> Resize
 {
     fn resize(&mut self, capacity: usize) {
         let full_capacity = HEADER_SIZE + capacity + TRAILER_SIZE;
+        let buffer = alloc::vec![0u8; full_capacity].into_boxed_slice();
         // SAFETY: [Cell<u8>] has the same layout as [u8]
-        self.0 = unsafe {
-            Box::from_raw(Box::into_raw(vec![0u8; full_capacity].into_boxed_slice()) as *mut _)
-        };
+        self.0 = unsafe { Box::from_raw(Box::into_raw(buffer) as *mut _) };
     }
 }

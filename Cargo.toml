@@ -25,7 +25,7 @@ repository = "https://github.com/wyfo/swap-buffer-queue"
 default = ["std"]
 alloc = []
 std = ["alloc"]
-stream = ["dep:futures-core", "dep:futures-util"]
+stream = ["std", "dep:futures-core", "dep:futures-util"]
 write = []
 
 [dependencies]

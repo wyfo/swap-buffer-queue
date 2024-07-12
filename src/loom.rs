@@ -10,20 +10,22 @@ mod without_loom {
     pub(crate) const BACKOFF_LIMIT: usize = 6;
 
     #[derive(Debug, Default)]
-    pub(crate) struct LoomUnsafeCell<T>(cell::UnsafeCell<T>);
+    pub(crate) struct LoomUnsafeCell<T: ?Sized>(cell::UnsafeCell<T>);
 
-    impl<T> LoomUnsafeCell<T> {
-        #[cfg(feature = "std")]
-        pub(crate) fn new(data: T) -> Self {
-            Self(cell::UnsafeCell::new(data))
-        }
-
+    impl<T: ?Sized> LoomUnsafeCell<T> {
         pub(crate) fn with<R>(&self, f: impl FnOnce(*const T) -> R) -> R {
             f(self.0.get())
         }
 
         pub(crate) fn with_mut<R>(&self, f: impl FnOnce(*mut T) -> R) -> R {
             f(self.0.get())
+        }
+    }
+
+    #[cfg(feature = "std")]
+    impl<T> LoomUnsafeCell<T> {
+        pub(crate) fn new(data: T) -> Self {
+            Self(cell::UnsafeCell::new(data))
         }
     }
 }
