@@ -13,9 +13,9 @@ This library is intended to be a (better, I hope) alternative to traditional MPS
 
 It is especially well suited for IO writing workflow, see [buffer implementations](#buffer-implementations).
 
-The crate is *no_std* (some buffer implementations may require `std`).
+The crate is `no_std` – some buffer implementations may require `alloc` crate.
 
-In addition to the low level `Queue` implementation, a higher level `SynchronizedQueue` is provided with both blocking and asynchronous methods.
+In addition to the low level `Queue` implementation, a higher level `SynchronizedQueue` is provided with both blocking and asynchronous methods. Synchronization feature requires `std`.
 
 
 ## Example
