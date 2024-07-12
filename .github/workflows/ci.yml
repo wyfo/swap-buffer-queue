@@ -22,7 +22,7 @@ jobs:
       - name: install miri
         run: rustup install nightly && rustup +nightly component add miri
       - name: miri
-        run: cargo +nightly miri test --all-features --all-seeds
+        run: cargo +nightly miri test --all-features --many-seeds
       - name: loom
         run: cargo test --release --lib
         env:
