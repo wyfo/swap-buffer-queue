@@ -1,9 +1,4 @@
-use core::{
-    mem,
-    mem::MaybeUninit,
-    ops::{Deref, DerefMut},
-    slice,
-};
+use core::{mem, mem::MaybeUninit};
 
 pub(crate) fn init_array<T, const N: usize>(default: impl Fn() -> T) -> [T; N] {
     // SAFETY: common MaybeUninit pattern, used in unstable `MaybeUninit::uninit_array`
@@ -12,11 +7,12 @@ pub(crate) fn init_array<T, const N: usize>(default: impl Fn() -> T) -> [T; N] {
         elem.write(default());
     }
     // SAFETY: all elements have been initialized
-    // I used `std::mem::transmute_copy` because `transmute` doesn't work here
+    // I used `core::mem::transmute_copy` because `transmute` doesn't work here
     // see https://users.rust-lang.org/t/transmuting-a-generic-array/45645
     unsafe { mem::transmute_copy(&array) }
 }
 
+#[cfg(feature = "write")]
 /// A hack for const-expression-sized array, as discussed here:
 /// https://users.rust-lang.org/t/is-slice-from-raw-parts-unsound-in-case-of-a-repr-c-struct-with-consecutive-arrays/88368
 #[repr(C)]
@@ -31,29 +27,38 @@ pub(crate) struct ArrayWithHeaderAndTrailer<
     trailer: [T; TRAILER_SIZE],
 }
 
-impl<T, const HEADER_SIZE: usize, const N: usize, const TRAILER_SIZE: usize> Deref
+#[cfg(feature = "write")]
+impl<T, const HEADER_SIZE: usize, const N: usize, const TRAILER_SIZE: usize> core::ops::Deref
     for ArrayWithHeaderAndTrailer<T, HEADER_SIZE, N, TRAILER_SIZE>
 {
     type Target = [T];
     fn deref(&self) -> &Self::Target {
         // SAFETY: see struct documentation
         unsafe {
-            slice::from_raw_parts(self as *const _ as *const T, HEADER_SIZE + N + TRAILER_SIZE)
+            core::slice::from_raw_parts(
+                self as *const _ as *const T,
+                HEADER_SIZE + N + TRAILER_SIZE,
+            )
         }
     }
 }
 
-impl<T, const HEADER_SIZE: usize, const N: usize, const TRAILER_SIZE: usize> DerefMut
+#[cfg(feature = "write")]
+impl<T, const HEADER_SIZE: usize, const N: usize, const TRAILER_SIZE: usize> core::ops::DerefMut
     for ArrayWithHeaderAndTrailer<T, HEADER_SIZE, N, TRAILER_SIZE>
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // SAFETY: see struct documentation
         unsafe {
-            slice::from_raw_parts_mut(self as *mut _ as *mut T, HEADER_SIZE + N + TRAILER_SIZE)
+            core::slice::from_raw_parts_mut(
+                self as *mut _ as *mut T,
+                HEADER_SIZE + N + TRAILER_SIZE,
+            )
         }
     }
 }
 
+#[cfg(feature = "write")]
 impl<T, const HEADER_SIZE: usize, const N: usize, const TRAILER_SIZE: usize>
     ArrayWithHeaderAndTrailer<T, HEADER_SIZE, N, TRAILER_SIZE>
 {
@@ -66,6 +71,7 @@ impl<T, const HEADER_SIZE: usize, const N: usize, const TRAILER_SIZE: usize>
     }
 }
 
+#[cfg(feature = "write")]
 impl<T, const HEADER_SIZE: usize, const N: usize, const TRAILER_SIZE: usize> Default
     for ArrayWithHeaderAndTrailer<T, HEADER_SIZE, N, TRAILER_SIZE>
 where
