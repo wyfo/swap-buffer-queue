@@ -397,6 +397,7 @@ where
         // Swap buffers: previous dequeuing buffer become the enqueuing one
         let next_enqueuing = EnqueuingCapacity::new(next_buffer_index, next_capa - inserted_length);
         let mut backoff = 0;
+        // `AtomicUsize::swap` cannot be used directly, as the queue might be closed concurrently
         while let Err(enq) = self.enqueuing_capacity.compare_exchange_weak(
             enqueuing.into_atomic(),
             next_enqueuing.with_closed(enqueuing).into_atomic(),
