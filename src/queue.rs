@@ -357,7 +357,7 @@ where
         dequeuing: DequeuingLength,
         notify_enqueue: impl Fn(),
         resize: Option<impl FnOnce(&mut B) -> (bool, usize)>,
-    ) -> Result<BufferSlice<B, N>, TryDequeueError> {
+    ) -> Result<BufferSlice<'_, B, N>, TryDequeueError> {
         // If dequeuing length is greater than zero, it means than previous dequeuing is still
         // ongoing, either because previous `try_dequeue` operation returns pending error,
         // or because requeuing (after partial draining for example).
@@ -450,7 +450,7 @@ where
         &self,
         buffer_index: usize,
         length: NonZeroUsize,
-    ) -> Option<BufferSlice<B, N>> {
+    ) -> Option<BufferSlice<'_, B, N>> {
         for _ in 0..SPIN_LIMIT {
             // Buffers having been swapped, no more enqueuing can happen, we still need to wait
             // for ongoing one. They will be finished when the buffer length (updated after
@@ -645,7 +645,7 @@ where
     /// }
     /// assert_eq!(queue.try_dequeue().unwrap_err(), TryDequeueError::Closed)
     /// ```
-    pub fn try_dequeue(&self) -> Result<BufferSlice<B, N>, TryDequeueError> {
+    pub fn try_dequeue(&self) -> Result<BufferSlice<'_, B, N>, TryDequeueError> {
         self.try_dequeue_internal(
             self.lock_dequeuing()?,
             || self.notify.notify_enqueue(),
@@ -788,7 +788,7 @@ where
         &self,
         capacity: impl Into<Option<usize>>,
         insert: Option<impl FnOnce() -> I>,
-    ) -> Result<BufferSlice<B, N>, TryDequeueError>
+    ) -> Result<BufferSlice<'_, B, N>, TryDequeueError>
     where
         I: IntoIterator,
         I::Item: InsertIntoBuffer<B>,

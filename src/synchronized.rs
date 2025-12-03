@@ -225,7 +225,7 @@ where
     fn dequeue_sync(
         &self,
         deadline: Option<Instant>,
-    ) -> Result<BufferSlice<B, SynchronizedNotifier>, TryDequeueError> {
+    ) -> Result<BufferSlice<'_, B, SynchronizedNotifier>, TryDequeueError> {
         loop {
             if let Some(res) = try_dequeue(self, None) {
                 return res;
@@ -268,7 +268,7 @@ where
     /// queue.close();
     /// assert_eq!(task.join().unwrap().unwrap_err(), DequeueError::Closed);
     /// ```
-    pub fn dequeue(&self) -> Result<BufferSlice<B, SynchronizedNotifier>, DequeueError> {
+    pub fn dequeue(&self) -> Result<BufferSlice<'_, B, SynchronizedNotifier>, DequeueError> {
         self.dequeue_sync(None).map_err(dequeue_err)
     }
 
@@ -308,7 +308,7 @@ where
     pub fn dequeue_timeout(
         &self,
         timeout: Duration,
-    ) -> Result<BufferSlice<B, SynchronizedNotifier>, TryDequeueError> {
+    ) -> Result<BufferSlice<'_, B, SynchronizedNotifier>, TryDequeueError> {
         self.dequeue_sync(Some(Instant::now() + timeout))
     }
 
@@ -360,7 +360,7 @@ where
     /// ```
     pub async fn dequeue_async(
         &self,
-    ) -> Result<BufferSlice<B, SynchronizedNotifier>, DequeueError> {
+    ) -> Result<BufferSlice<'_, B, SynchronizedNotifier>, DequeueError> {
         poll_fn(|cx| {
             if let Some(res) = try_dequeue(self, Some(cx)) {
                 return Poll::Ready(res.map_err(dequeue_err));
